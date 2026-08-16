@@ -1,0 +1,6 @@
+{
+  "name": "Objective Marker Offline",
+  "description": "An offline-first Optical Mark Recognition (OMR) grading application. Instantly scan student sheets, review grading flags, manage answer keys, and track historical results with seamless offline support and optional cloud-sync.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,17 @@
+{
+  "short_name": "Teacher's Toolkit",
+  "name": "Teacher's Toolkit — Classroom Command Center",
+  "icons": [
+    {
+      "src": "/app_logo.jpg",
+      "sizes": "192x192 512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#3b6ff5",
+  "display": "standalone",
+  "orientation": "portrait"
+}
