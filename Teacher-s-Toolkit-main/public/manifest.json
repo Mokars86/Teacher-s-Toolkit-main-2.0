@@ -1,6 +1,7 @@
 {
   "short_name": "TEACHER'S TOOLKit",
   "name": "TEACHER'S TOOLKit — Classroom Command Center",
+  "description": "Classroom Command Center for grading, attendance, lesson planning and school management.",
   "icons": [
     {
       "src": "/app_logo.png",
@@ -10,9 +11,21 @@
     },
     {
       "src": "/app_logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/app_logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/app_logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/apple-touch-icon.png",
@@ -22,8 +35,9 @@
     }
   ],
   "start_url": "/",
-  "background_color": "#ffffff",
-  "theme_color": "#10b981",
+  "scope": "/",
   "display": "standalone",
-  "orientation": "any"
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#10b981"
 }
