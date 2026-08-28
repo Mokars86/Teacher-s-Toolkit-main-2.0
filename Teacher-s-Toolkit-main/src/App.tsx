@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 // @ts-ignore
-import appLogo from './assets/images/app_logo.jpg';
+import appLogo from './assets/images/app_logo.png';
+// @ts-ignore
+import mokarsLogo from './assets/images/mokars_logo.png';
 import { 
   Camera, Upload, Plus, Search, Filter, Settings, User, Folder, Calendar, 
   ArrowLeft, ArrowRight, Lock, Mail, FileText, Sparkles, Share2, History, 
   Cloud, CloudOff, CheckCircle, CheckCircle2, Trash2, Edit3, AlertTriangle, 
   LogOut, Sliders, Eye, RefreshCw, AlertCircle, Bookmark, Check, ShieldCheck, ChevronRight, Award, Users,
-  TrendingUp, BookOpen, Bell, Building2, QrCode, ChevronDown, ShieldAlert, DollarSign, Package, Wallet, Layers
+  TrendingUp, BookOpen, Bell, Building2, QrCode, ChevronDown, ShieldAlert, DollarSign, Package, Wallet, Layers, Ticket,
+  MessageCircle, Gift
 } from 'lucide-react';
 
 import { 
@@ -25,15 +28,27 @@ import { StudentTrendTracker } from './components/StudentTrendTracker';
 import { LessonPlanner } from './components/LessonPlanner';
 import { SeatingChartModule } from './components/SeatingChartModule';
 import { HeadteacherPanel } from './components/HeadteacherPanel';
+import { SuperAdminPanel } from './components/SuperAdminPanel';
+import { WorkshopCertificateModule } from './components/WorkshopCertificateModule';
 import { SchoolConnectModal } from './components/SchoolConnectModal';
 import { SchoolCollectionsHub } from './components/SchoolCollectionsHub';
 import { ResourceTrackerModule } from './components/ResourceTrackerModule';
 import { ExamBuilderModule } from './components/ExamBuilderModule';
+import { QuestionBankModule } from './components/QuestionBankModule';
+import { SubscriptionModal } from './components/SubscriptionModal';
+import { PaywallModal } from './components/PaywallModal';
+import { ReferralHubModal } from './components/ReferralHubModal';
+import { 
+  canScanOMR, hasProAccess, hasSchoolLicense, 
+  LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, validateAndRedeemVoucher 
+} from './services/subscriptionService';
 
 export default function App() {
   // --- STATE PERSISTENCE & INITIAL SEEDING ---
   const [activeScreen, setActiveScreen] = useState<ScreenId>(ScreenId.SPLASH);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [splashProgress, setSplashProgress] = useState<number>(0);
+  const [splashStatusText, setSplashStatusText] = useState<string>("Initializing offline engine...");
 
   // Mode & Role Management State
   const [activeSchoolMode, setActiveSchoolMode] = useState<SchoolMode>("linked");
@@ -81,18 +96,142 @@ export default function App() {
       type: "sync"
     }
   ]);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState<boolean>(false);
+  const [isPaywallModalOpen, setIsPaywallModalOpen] = useState<boolean>(false);
+  const [isReferralModalOpen, setIsReferralModalOpen] = useState<boolean>(false);
+  const [paywallInfo, setPaywallInfo] = useState<{ title?: string; description?: string; featureTriggered?: string }>({});
+
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const cached = localStorage.getItem('omr_user_profile');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      return {
+        ...parsed,
+        scansThisMonth: parsed.scansThisMonth ?? 18,
+        maxFreeScansPerMonth: parsed.maxFreeScansPerMonth ?? 50,
+        smsCredits: parsed.smsCredits ?? 120,
+      };
+    }
     return {
-      email: '',
-      fullName: 'Teacher Guest',
-      isLoggedIn: false,
+      email: 'teacher@school.edu.gh',
+      fullName: 'Teacher Kwesi Mensah',
+      isLoggedIn: true,
       isPremium: false,
-      syncEnabled: false,
-      offlineCount: 3
+      syncEnabled: true,
+      offlineCount: 3,
+      rewardPoints: 150,
+      referralCode: 'TEACHER-GH-8921',
+      referralCount: 2,
+      submittedQuestionsCount: 1,
+      activeSubscriptionPlan: 'Free',
+      scansThisMonth: 18,
+      maxFreeScansPerMonth: 50,
+      smsCredits: 120,
+      endOfTermPassExpiry: null,
+      schoolLicenseExpiry: null,
     };
   });
+
+  const handleTriggerPaywall = (featureTriggered: string, description: string, title?: string) => {
+    setPaywallInfo({
+      title: title || "Upgrade to Access Feature",
+      description,
+      featureTriggered,
+    });
+    setIsPaywallModalOpen(true);
+  };
+
+  const [vouchersList, setVouchersList] = useState<LicenseVoucher[]>(PRESET_WORKSHOP_VOUCHERS);
+  const [authVoucherInput, setAuthVoucherInput] = useState<string>('');
+  const [authVoucherFeedback, setAuthVoucherFeedback] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleRedeemVoucherOnAuth = () => {
+    if (!authVoucherInput.trim()) {
+      setAuthVoucherFeedback({ success: false, message: 'Please enter a valid voucher code.' });
+      return;
+    }
+    const result = validateAndRedeemVoucher(authVoucherInput, userProfile, vouchersList);
+    if (result.success && result.updatedProfile) {
+      setUserProfile((prev) => ({ ...prev, ...result.updatedProfile, isLoggedIn: true }));
+      if (result.voucher) {
+        setVouchersList((prev) => prev.map((v) => (v.code.toUpperCase() === result.voucher?.code.toUpperCase() ? result.voucher : v)));
+      }
+      setAuthVoucherFeedback({ success: true, message: result.message });
+      setAuthVoucherInput('');
+    } else {
+      setAuthVoucherFeedback({ success: false, message: result.message });
+    }
+  };
+
+  const handleLogoutHeadteacher = () => {
+    setUserRole("teacher");
+    setActiveSchoolMode("personal");
+    setUserProfile((prev) => ({ ...prev, isLoggedIn: false }));
+    setActiveScreen(ScreenId.AUTH);
+  };
+
+  // 3. USER AUTHENTICATION (LOGIN/SIGNUP)
+  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authPass, setAuthPass] = useState<string>('');
+  const [authName, setAuthName] = useState<string>('');
+  const [selectedAuthRole, setSelectedAuthRole] = useState<UserRole>('teacher');
+  const [isRegistering, setIsRegistering] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>('');
+  const [authReferralCode, setAuthReferralCode] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const ref = urlParams.get('ref');
+      if (ref) return ref.trim().toUpperCase();
+      const hashMatch = window.location.hash.match(/ref=([A-Za-z0-9_-]+)/);
+      if (hashMatch) return hashMatch[1].toUpperCase();
+    }
+    return '';
+  });
+
+  const handleAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+
+    if (!authEmail || !authPass || (isRegistering && !authName)) {
+      setAuthError('All form credentials are required.');
+      return;
+    }
+
+    const assignedRole = selectedAuthRole;
+    setUserRole(assignedRole);
+
+    let earnedBonusPoints = 0;
+    if (isRegistering && authReferralCode.trim()) {
+      earnedBonusPoints = 50; // New user bonus for registering via referral link
+    }
+
+    const generatedRefCode = 'TEACHER-GH-' + Math.floor(1000 + Math.random() * 9000);
+
+    setUserProfile((prev) => ({
+      ...prev,
+      email: authEmail,
+      fullName: isRegistering ? authName : (authEmail.split('@')[0] || (assignedRole === 'headteacher' ? 'Headteacher User' : 'Teacher User')),
+      isLoggedIn: true,
+      isPremium: true,
+      rewardPoints: (prev.rewardPoints || 150) + earnedBonusPoints,
+      referralCode: prev.referralCode || generatedRefCode,
+      syncEnabled: true,
+      offlineCount: 0
+    }));
+
+    if (earnedBonusPoints > 0) {
+      alert(`🎉 Welcome! Referral link applied. You received ${earnedBonusPoints} bonus Reward Points!`);
+    }
+    
+    // Automatically trigger synced status on results when logging in
+    setResultsList(prev => prev.map(r => ({ ...r, status: 'Synced' })));
+
+    if (assignedRole === 'headteacher') {
+      setActiveScreen(ScreenId.HEADTEACHER_PANEL);
+    } else {
+      setActiveScreen(ScreenId.DASHBOARD);
+    }
+  };
 
   const [classSettings, setClassSettings] = useState<ClassSettings>(() => {
     const cached = localStorage.getItem('omr_class_settings');
@@ -247,13 +386,36 @@ export default function App() {
     localStorage.setItem('omr_graded_results', JSON.stringify(resultsList));
   }, [resultsList]);
 
-  // Handle Splash auto transition (directly to Auth, skipping onboarding)
+  // Handle Splash auto transition with smooth animated progress
   useEffect(() => {
     if (activeScreen === ScreenId.SPLASH) {
-      const timer = setTimeout(() => {
-        setActiveScreen(ScreenId.AUTH);
-      }, 2500);
-      return () => clearTimeout(timer);
+      setSplashProgress(0);
+      setSplashStatusText("Initializing offline engine...");
+      const startTime = Date.now();
+      const duration = 2400; // 2.4 seconds total
+
+      const interval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(Math.floor((elapsed / duration) * 100), 100);
+        setSplashProgress(progress);
+
+        if (progress < 30) {
+          setSplashStatusText("Initializing offline engine...");
+        } else if (progress < 65) {
+          setSplashStatusText("Loading classroom tools...");
+        } else if (progress < 95) {
+          setSplashStatusText("Preparing teacher portal...");
+        } else {
+          setSplashStatusText("Ready!");
+        }
+
+        if (progress >= 100) {
+          clearInterval(interval);
+          setActiveScreen(ScreenId.AUTH);
+        }
+      }, 30);
+
+      return () => clearInterval(interval);
     }
   }, [activeScreen]);
 
@@ -266,43 +428,85 @@ export default function App() {
 
   // --- SCREEN RENDERERS ---
 
-  // 1. SPLASH SCREEN
+  // 1. SPLASH SCREEN (REDESIGNED WITH RICH EMERALD GREEN BACKGROUND & GLASSMORPHISM)
   const renderSplashScreen = () => {
     return (
       <div 
         id="screen_splash" 
         onClick={() => setActiveScreen(ScreenId.AUTH)}
-        className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-white text-slate-900 omr-watermark cursor-pointer"
+        className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-950 text-white cursor-pointer select-none"
       >
-        <div className="flex flex-col items-center space-y-6 text-center z-10 animate-fade-in">
-          {/* Logo without rings or heavy glow */}
+        {/* Background ambient glowing emerald & teal orb layers */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full pointer-events-none opacity-40 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, #10b981 0%, transparent 70%)' }} />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full pointer-events-none opacity-30 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, #34d399 0%, transparent 70%)', animationDelay: '1.8s' }} />
+        <div className="absolute top-1/2 right-10 w-72 h-72 rounded-full pointer-events-none opacity-20 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, #059669 0%, transparent 70%)', animationDelay: '3s' }} />
+
+        {/* Decorative Grid Mesh Overlay */}
+        <div className="absolute inset-0 pointer-events-none opacity-10 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px]" />
+
+        <div className="flex flex-col items-center space-y-7 text-center z-10 animate-fade-in max-w-sm sm:max-w-md">
+          {/* Logo container with Glassmorphism Card & Glowing Halo */}
           <div className="relative flex items-center justify-center">
-            <img 
-              id="app_logo_splash"
-              src={appLogo} 
-              alt="Teacher's Toolkit Logo" 
-              className="w-28 h-28 lg:w-36 lg:h-36 rounded-3xl object-cover shadow-xl animate-bounce-in" 
-              referrerPolicy="no-referrer"
-              style={{border:'1px solid rgba(226,232,240,0.8)'}}
-            />
+            <div className="absolute w-40 h-40 lg:w-48 lg:h-48 rounded-full bg-emerald-400/25 blur-2xl animate-pulse" />
+            
+            <div className="p-3 bg-white/10 backdrop-blur-2xl border-2 border-emerald-400/50 rounded-[2.5rem] shadow-2xl ring-4 ring-emerald-500/20 relative z-10 transition-transform duration-300 hover:scale-105">
+              <img 
+                id="app_logo_splash"
+                src={appLogo} 
+                alt="TEACHER'S TOOLKit Logo" 
+                className="w-28 h-28 lg:w-36 lg:h-36 rounded-3xl object-cover animate-pop-heart shadow-xl" 
+                referrerPolicy="no-referrer"
+                style={{ border: '3px solid #10b981', boxShadow: '0 0 28px rgba(16, 185, 129, 0.6)' }}
+              />
+            </div>
           </div>
           
-          <div className="space-y-1.5 px-2">
-            <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-wider uppercase text-center" style={{color:'#10b981'}}>
-              TEACHER'S TOOLKIT
+          <div className="space-y-2 px-2">
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-wider text-center text-white drop-shadow-md">
+              TEACHER'S TOOLKit
             </h1>
-            <p className="text-sm lg:text-base font-semibold tracking-wide text-slate-500">
-              Classroom Command Center
-            </p>
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/20 backdrop-blur-md border border-emerald-400/40 rounded-full">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-300 animate-spin" style={{ animationDuration: '4s' }} />
+              <span className="text-xs sm:text-sm font-extrabold tracking-wide text-emerald-200 uppercase">
+                GES Classroom Command Center
+              </span>
+            </div>
           </div>
         </div>
         
-        {/* Bottom loading bar + tap hint */}
-        <div className="absolute bottom-12 left-0 right-0 flex flex-col items-center space-y-3 z-10">
-          <div className="w-44 lg:w-64 h-1.5 rounded-full overflow-hidden bg-slate-100 border border-slate-200">
-            <div className="h-full rounded-full animate-pulse" style={{width:'65%',background:'linear-gradient(90deg, #3b6ff5, #e94560)'}} />
+        {/* Bottom loading bar + percentage + status text + version badge */}
+        <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center space-y-4 z-10 px-6">
+          <div className="w-64 sm:w-80 lg:w-96 flex flex-col items-center space-y-2.5">
+            {/* Status text & percentage */}
+            <div className="w-full flex items-center justify-between text-xs font-semibold text-emerald-200 px-1">
+              <span className="flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-300 shrink-0" />
+                <span>{splashStatusText}</span>
+              </span>
+              <span className="font-mono font-black text-white text-sm bg-emerald-800/60 px-2 py-0.5 rounded-md border border-emerald-500/40">
+                {splashProgress}%
+              </span>
+            </div>
+
+            {/* Animated Progress Bar */}
+            <div className="w-full h-3 rounded-full overflow-hidden bg-emerald-950/80 border border-emerald-500/50 p-0.5 relative shadow-inner backdrop-blur-md">
+              <div 
+                className="h-full rounded-full transition-all duration-75 relative overflow-hidden" 
+                style={{
+                  width: `${splashProgress}%`,
+                  background: 'linear-gradient(90deg, #10b981 0%, #34d399 50%, #6ee7b7 100%)',
+                  boxShadow: '0 0 16px rgba(52, 211, 153, 0.8)'
+                }}
+              >
+                {/* Moving shimmer sweep effect inside progress bar */}
+                <div className="absolute inset-0 w-full h-full animate-shimmer" style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%)', backgroundSize: '200% 100%' }} />
+              </div>
+            </div>
           </div>
-          <span className="text-[10px] lg:text-xs font-mono text-slate-400">Click or tap anywhere to start · v2.1.0</span>
+
+          <span className="text-[11px] lg:text-xs font-mono text-emerald-300/80 animate-pulse tracking-wider">
+            Click or tap anywhere to launch · v2.1.0 Offline Engine
+          </span>
         </div>
       </div>
     );
@@ -400,52 +604,12 @@ export default function App() {
     );
   };
 
-  // 3. USER AUTHENTICATION (LOGIN/SIGNUP)
-  const [authEmail, setAuthEmail] = useState<string>('');
-  const [authPass, setAuthPass] = useState<string>('');
-  const [authName, setAuthName] = useState<string>('');
-  const [selectedAuthRole, setSelectedAuthRole] = useState<UserRole>('teacher');
-  const [isRegistering, setIsRegistering] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string>('');
-
-  const handleAuthSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-
-    if (!authEmail || !authPass || (isRegistering && !authName)) {
-      setAuthError('All form credentials are required.');
-      return;
-    }
-
-    const assignedRole = selectedAuthRole;
-    setUserRole(assignedRole);
-
-    // Handle Mock login/signup with active syncing profile
-    setUserProfile({
-      email: authEmail,
-      fullName: isRegistering ? authName : (authEmail.split('@')[0] || (assignedRole === 'headteacher' ? 'Headteacher User' : 'Teacher User')),
-      isLoggedIn: true,
-      isPremium: true,
-      syncEnabled: true,
-      offlineCount: 0
-    });
-    
-    // Automatically trigger synced status on results when logging in
-    setResultsList(prev => prev.map(r => ({ ...r, status: 'Synced' })));
-
-    if (assignedRole === 'headteacher') {
-      setActiveScreen(ScreenId.HEADTEACHER_PANEL);
-    } else {
-      setActiveScreen(ScreenId.DASHBOARD);
-    }
-  };
-
   const renderAuthScreen = () => {
     return (
-      <div id="screen_auth" className="min-h-screen mesh-light omr-watermark flex items-center justify-center p-4 sm:p-6">
-        <div className="w-full max-w-md lg:max-w-4xl rounded-2xl animate-scale-in relative overflow-hidden glass-card" style={{boxShadow:'0 20px 60px -15px rgba(59,111,245,0.18)'}}>
+      <div id="screen_auth" className="min-h-screen mesh-light omr-watermark flex items-center justify-center p-2.5 sm:p-6 py-4 sm:py-8">
+        <div className="w-full max-w-md lg:max-w-4xl rounded-2xl animate-scale-in relative glass-card max-h-[95vh] lg:max-h-none overflow-y-auto" style={{boxShadow:'0 20px 60px -15px rgba(59,111,245,0.18)'}}>
           {/* Gradient top accent bar */}
-          <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#e94560)'}} />
+          <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl z-20" style={{background:'linear-gradient(90deg,#3b6ff5,#10b981,#e94560)'}} />
           
           <div className="flex flex-col lg:flex-row">
             {/* Left panel - branding (visible on desktop) */}
@@ -455,17 +619,17 @@ export default function App() {
               <div className="absolute bottom-10 left-10 w-24 h-24 rounded-full" style={{background:'radial-gradient(circle, rgba(233,69,96,0.15), transparent 70%)'}} />
               <div className="relative z-10 text-center space-y-6">
                 <div className="relative inline-flex items-center justify-center">
-                  <div className="absolute w-28 h-28 rounded-full animate-pulse" style={{background:'radial-gradient(circle, rgba(59,111,245,0.15), transparent 70%)'}} />
+                  <div className="absolute w-28 h-28 rounded-full animate-pulse" style={{background:'radial-gradient(circle, rgba(16,185,129,0.2), transparent 70%)'}} />
                   <img 
                     src={appLogo} 
-                    alt="Teacher's Toolkit Logo" 
+                    alt="TEACHER'S TOOLKit Logo" 
                     className="relative w-24 h-24 rounded-2xl object-cover" 
                     referrerPolicy="no-referrer"
-                    style={{border:'2px solid rgba(255,255,255,0.2)', boxShadow:'0 8px 32px rgba(0,0,0,0.3)'}}
+                    style={{border:'3.5px solid #10b981', boxShadow:'0 0 24px rgba(16,185,129,0.5)'}}
                   />
                 </div>
                 <div className="space-y-2">
-                  <h1 className="text-lg sm:text-2xl font-black tracking-wider uppercase" style={{color:'#10b981'}}>TEACHER'S TOOLKIT</h1>
+                  <h1 className="text-lg sm:text-2xl font-black tracking-wider" style={{color:'#10b981'}}>TEACHER'S TOOLKit</h1>
                   <p className="text-xs leading-relaxed max-w-[220px] mx-auto" style={{color:'rgba(144,184,255,0.7)'}}>
                     Your all-in-one paperless grading, attendance & school management platform.
                   </p>
@@ -480,30 +644,53 @@ export default function App() {
                     <span>Cloud Sync</span>
                   </div>
                 </div>
+
+                {/* WhatsApp Community Button */}
+                <div className="pt-2">
+                  <a
+                    href="https://chat.whatsapp.com/CJueLonpuiyE9rPKPnQbAG"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    id="link_whatsapp_left_panel"
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition shadow-xs group"
+                  >
+                    <MessageCircle className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    <span>Join WhatsApp Support Group</span>
+                  </a>
+                </div>
+
+                {/* Developed By Attribution Badge */}
+                <div className="pt-4 border-t border-slate-700/40 flex flex-col items-center gap-1.5 text-center mt-4">
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Developed By</span>
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-sm border border-white/15">
+                    <img src={mokarsLogo} alt="Mokars Tech Logo" className="w-4 h-4 object-contain" />
+                    <span className="text-xs font-black tracking-wide text-white">Mokars Tech</span>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Right panel - form */}
-            <div className="flex-1 p-5 sm:p-6 lg:p-8">
-              <div className="text-center space-y-2 mb-5 mt-2 lg:mt-0">
+            <div className="flex-1 p-3.5 sm:p-6 lg:p-8">
+              <div className="text-center space-y-1.5 sm:space-y-2 mb-4 sm:mb-5 mt-1 lg:mt-0">
                 {/* Logo (mobile only) */}
                 <div className="relative inline-flex items-center justify-center lg:hidden">
-                  <div className="absolute w-20 h-20 rounded-2xl" style={{background:'linear-gradient(135deg,rgba(59,111,245,0.15),rgba(233,69,96,0.1))'}} />
+                  <div className="absolute w-16 h-16 rounded-2xl" style={{background:'radial-gradient(circle,rgba(16,185,129,0.2),transparent 70%)'}} />
                   <img 
                     id="app_logo_auth"
                     src={appLogo} 
-                    alt="Teacher's Toolkit Logo" 
-                    className="relative w-16 h-16 rounded-xl object-cover" 
+                    alt="TEACHER'S TOOLKit Logo" 
+                    className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl object-cover" 
                     referrerPolicy="no-referrer"
-                    style={{border:'2px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 16px rgba(59,111,245,0.2)'}}
+                    style={{border:'3px solid #10b981',boxShadow:'0 0 16px rgba(16,185,129,0.4)'}}
                   />
                 </div>
-                <h2 className="text-lg font-bold text-slate-900 tracking-tight">
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
                   {isRegistering 
                     ? (selectedAuthRole === 'headteacher' ? "Create Headteacher Account" : "Create Teacher Account") 
                     : (selectedAuthRole === 'headteacher' ? "Headteacher Portal Login" : "Teacher Portal Login")}
                 </h2>
-                <p className="text-xs text-slate-500 px-4 leading-tight">
+                <p className="text-[11px] sm:text-xs text-slate-500 px-2 sm:px-4 leading-tight">
                   Cloud sync, grade reporting, and management tools.
                 </p>
               </div>
@@ -516,7 +703,7 @@ export default function App() {
               )}
 
               {/* Role selector */}
-              <div className="mb-4 p-1 rounded-xl flex gap-1" style={{background:'#f1f5f9',border:'1px solid #e2e8f0'}}>
+              <div className="mb-3.5 sm:mb-4 p-1 rounded-xl flex gap-1" style={{background:'#f1f5f9',border:'1px solid #e2e8f0'}}>
                 <button
                   type="button"
                   id="btn_auth_role_teacher"
@@ -539,7 +726,7 @@ export default function App() {
                 </button>
               </div>
 
-              <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+              <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-3.5">
                 {isRegistering && (
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Full Name</label>
@@ -549,7 +736,7 @@ export default function App() {
                       value={authName}
                       onChange={(e) => setAuthName(e.target.value)}
                       placeholder={selectedAuthRole === 'headteacher' ? "Rev. Dr. Emmanuel Mensah" : "Ms. Sarah Jenkins"}
-                      className="w-full rounded-xl px-3.5 py-3 text-sm font-medium focus:outline-none"
+                      className="w-full rounded-xl px-3.5 py-2.5 sm:py-3 text-xs sm:text-sm font-medium focus:outline-none"
                       style={{background:'#f0f4f8',border:'1.5px solid #e2e8f0',color:'#1e293b',transition:'border-color 0.2s'}}
                       onFocus={e => e.currentTarget.style.borderColor='#3b6ff5'}
                       onBlur={e => e.currentTarget.style.borderColor='#e2e8f0'}
@@ -560,14 +747,14 @@ export default function App() {
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email Address</label>
                   <div className="relative">
-                    <Mail className="absolute left-3.5 top-3 w-4 h-4" style={{color:'#94a3b8'}} />
+                    <Mail className="absolute left-3.5 top-2.5 sm:top-3 w-4 h-4" style={{color:'#94a3b8'}} />
                     <input 
                       id="input_auth_email"
                       type="email" 
                       value={authEmail}
                       onChange={(e) => setAuthEmail(e.target.value)}
                       placeholder={selectedAuthRole === 'headteacher' ? "headmaster@school.edu" : "sarah@school.edu"}
-                      className="w-full rounded-xl pl-10 pr-3.5 py-3 text-sm font-medium focus:outline-none"
+                      className="w-full rounded-xl pl-10 pr-3.5 py-2.5 sm:py-3 text-xs sm:text-sm font-medium focus:outline-none"
                       style={{background:'#f0f4f8',border:'1.5px solid #e2e8f0',color:'#1e293b',transition:'border-color 0.2s'}}
                       onFocus={e => e.currentTarget.style.borderColor='#3b6ff5'}
                       onBlur={e => e.currentTarget.style.borderColor='#e2e8f0'}
@@ -583,17 +770,39 @@ export default function App() {
                     value={authPass}
                     onChange={(e) => setAuthPass(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full rounded-xl px-3.5 py-3 text-sm font-medium focus:outline-none"
+                    className="w-full rounded-xl px-3.5 py-2.5 sm:py-3 text-xs sm:text-sm font-medium focus:outline-none"
                     style={{background:'#f0f4f8',border:'1.5px solid #e2e8f0',color:'#1e293b',transition:'border-color 0.2s'}}
                     onFocus={e => e.currentTarget.style.borderColor='#3b6ff5'}
                     onBlur={e => e.currentTarget.style.borderColor='#e2e8f0'}
                   />
                 </div>
 
+                {isRegistering && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Referral Code (Optional)</label>
+                      {authReferralCode && (
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          🎁 +50 Bonus Pts
+                        </span>
+                      )}
+                    </div>
+                    <input 
+                      id="input_auth_referral"
+                      type="text" 
+                      value={authReferralCode}
+                      onChange={(e) => setAuthReferralCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. TEACHER-GH-8921"
+                      className="w-full rounded-xl px-3.5 py-2.5 sm:py-3 text-xs sm:text-sm font-mono font-bold uppercase focus:outline-none"
+                      style={{background:'#f0f4f8',border: authReferralCode ? '1.5px solid #10b981' : '1.5px solid #e2e8f0',color:'#1e293b',transition:'border-color 0.2s'}}
+                    />
+                  </div>
+                )}
+
                 <button 
                   id="btn_auth_submit"
                   type="submit"
-                  className="w-full py-3.5 btn-primary rounded-xl text-sm mt-1"
+                  className="w-full py-3 sm:py-3.5 btn-primary rounded-xl text-xs sm:text-sm mt-1"
                 >
                   {isRegistering 
                     ? (selectedAuthRole === 'headteacher' ? "Sign Up as Headteacher" : "Sign Up & Sync") 
@@ -601,7 +810,7 @@ export default function App() {
                 </button>
               </form>
 
-              <div className="text-center mt-4">
+              <div className="text-center mt-3 sm:mt-4">
                 <button
                   id="btn_toggle_auth_mode"
                   onClick={() => setIsRegistering(!isRegistering)}
@@ -612,36 +821,81 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Divider */}
-              <div className="relative my-4">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full" style={{borderTop:'1px solid #e2e8f0'}}></div>
-                </div>
-                <div className="relative flex justify-center text-[10px] uppercase font-mono font-bold">
-                  <span className="px-2.5" style={{background:'rgba(255,255,255,0.7)',color:'#94a3b8'}}>OR</span>
-                </div>
+              {/* WhatsApp Support Group Card */}
+              <div className="mt-3.5 pt-3 border-t border-slate-200/80">
+                <a
+                  href="https://chat.whatsapp.com/CJueLonpuiyE9rPKPnQbAG"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="btn_join_whatsapp_group"
+                  className="w-full py-2.5 sm:py-3 px-3 sm:px-4 bg-gradient-to-r from-emerald-50 via-teal-50/50 to-emerald-50 hover:from-emerald-100 hover:to-emerald-100 border border-emerald-200/90 text-emerald-950 font-bold rounded-xl text-xs flex items-center justify-between shadow-xs transition active:scale-[0.98] group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 pr-1">
+                    <div className="p-1.5 sm:p-2 bg-emerald-500 text-white rounded-lg shrink-0 shadow-xs flex items-center justify-center">
+                      <MessageCircle className="w-4 h-4 shrink-0" />
+                    </div>
+                    <div className="text-left min-w-0 flex-1">
+                      <span className="font-extrabold text-slate-900 text-[11px] sm:text-xs block group-hover:text-emerald-700 transition truncate">
+                        Join Teacher's Toolkit WhatsApp Group
+                      </span>
+                      <span className="text-[9.5px] sm:text-[10px] text-emerald-700 font-medium block truncate">
+                        Instant support, updates & teacher community
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-emerald-600 shrink-0 group-hover:translate-x-0.5 transition-transform ml-1" />
+                </a>
               </div>
 
-              <button
-                id="btn_continue_guest"
-                onClick={() => {
-                  setActiveSchoolMode("personal");
-                  setUserProfile({
-                    email: '',
-                    fullName: 'Teacher Guest',
-                    isLoggedIn: false,
-                    isPremium: false,
-                    syncEnabled: false,
-                    offlineCount: resultsList.filter(r => r.status === 'Offline Pending').length
-                  });
-                  setActiveScreen(ScreenId.DASHBOARD);
-                }}
-                className="w-full py-2.5 text-slate-700 font-bold rounded-xl transition text-xs flex items-center justify-center gap-1.5"
-                style={{background:'#f0f4f8',border:'1px solid #e2e8f0'}}
-              >
-                <CloudOff className="w-4 h-4" style={{color:'#94a3b8'}} />
-                <span>Continue as Guest (Offline Mode)</span>
-              </button>
+              {/* Super Admin & Developer Portal Access Card */}
+              <div className="mt-3 pt-3 border-t border-slate-200/60">
+                <button
+                  type="button"
+                  id="btn_auth_direct_headteacher"
+                  onClick={() => {
+                    setUserRole("superadmin");
+                    setActiveSchoolMode("linked");
+                    setUserProfile({
+                      email: 'admin@teacherstoolkit.app',
+                      fullName: 'Super Admin Developer',
+                      isLoggedIn: true,
+                      isPremium: true,
+                      syncEnabled: true,
+                      offlineCount: 0,
+                      rewardPoints: 1000,
+                      referralCode: 'DEV-ADMIN-001',
+                      referralCount: 10,
+                      submittedQuestionsCount: 20,
+                      activeSubscriptionPlan: 'School License',
+                      scansThisMonth: 0,
+                      maxFreeScansPerMonth: 999999,
+                      smsCredits: 5000
+                    });
+                    setActiveScreen(ScreenId.SUPER_ADMIN_PANEL);
+                  }}
+                  className="w-full py-3 px-4 bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 hover:from-slate-950 hover:to-emerald-900 text-white font-bold rounded-xl text-xs flex items-center justify-between shadow-md transition cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-1.5 bg-amber-400 text-slate-950 rounded-lg shrink-0">
+                      <Award className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <span className="font-bold text-white text-xs block">Super Admin & Developer Portal</span>
+                      <span className="text-[10px] text-emerald-300 font-normal">Generate workshop voucher codes & manage school licenses</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                </button>
+              </div>
+
+              {/* Developed By Attribution Badge */}
+              <div className="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Developed By:</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">
+                  <img src={mokarsLogo} alt="Mokars Tech Logo" className="w-4 h-4 object-contain" />
+                  <span className="text-xs font-black tracking-tight text-slate-800">Mokars Tech</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -668,18 +922,18 @@ export default function App() {
                 <img 
                   id="app_logo_header"
                   src={appLogo} 
-                  alt="Teacher's Toolkit Logo" 
+                  alt="TEACHER'S TOOLKit Logo" 
                   className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover" 
                   referrerPolicy="no-referrer"
-                  style={{border:'2px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 12px rgba(59,111,245,0.15)'}}
+                  style={{border:'2.5px solid #10b981',boxShadow:'0 0 12px rgba(16,185,129,0.4)'}}
                 />
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full flex items-center justify-center" style={{background:'linear-gradient(135deg,#3b6ff5,#e94560)'}}>
-                  <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-white rounded-full" />
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full flex items-center justify-center bg-emerald-500">
+                  <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-white rounded-full animate-ping" />
                 </div>
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 sm:gap-2">
-                  <h1 className="text-[11px] xs:text-xs sm:text-sm font-black tracking-wider uppercase whitespace-nowrap" style={{color:'#10b981'}}>TEACHER'S TOOLKIT</h1>
+                  <h1 className="text-[11px] xs:text-xs sm:text-sm font-black tracking-wider whitespace-nowrap" style={{color:'#10b981'}}>TEACHER'S TOOLKit</h1>
                   
                   {userRole === "headteacher" ? (
                     <select
@@ -724,82 +978,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Desktop Navigation Links (Visible on desktop viewports) */}
-            <div className="hidden md:flex items-center gap-1 p-1 rounded-xl" style={{background:'rgba(240,244,248,0.7)', border:'1px solid rgba(226,232,240,0.8)'}}>
-              <button
-                type="button"
-                id="desk_nav_home"
-                onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  activeScreen === ScreenId.DASHBOARD ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Building2 className="w-3.5 h-3.5" />
-                <span>Home</span>
-              </button>
-
-              <button
-                type="button"
-                id="desk_nav_students"
-                onClick={() => setActiveScreen(ScreenId.ATTENDANCE_SHEET)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  [ScreenId.ATTENDANCE_SHEET, ScreenId.STUDENT_TREND_TRACKER, ScreenId.SEATING_CHART].includes(activeScreen) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Students</span>
-              </button>
-
-              <button
-                type="button"
-                id="desk_nav_reports"
-                onClick={() => setActiveScreen(ScreenId.TERMINAL_REPORT)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  [ScreenId.TERMINAL_REPORT, ScreenId.RESULTS_HISTORY, ScreenId.SAVED_ANSWER_KEYS, ScreenId.LESSON_PLANNER].includes(activeScreen) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Reports</span>
-              </button>
-
-              <button
-                type="button"
-                id="desk_nav_finance"
-                onClick={() => setActiveScreen(ScreenId.COLLECTIONS_HUB)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  [ScreenId.COLLECTIONS_HUB, ScreenId.RESOURCE_TRACKER].includes(activeScreen) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <DollarSign className="w-3.5 h-3.5" />
-                <span>Finance</span>
-              </button>
-
-              <button
-                type="button"
-                id="desk_nav_scan"
-                onClick={() => {
-                  if (savedKeys.length > 0) setActiveAnswerKey(savedKeys[0]);
-                  setActiveScreen(ScreenId.CAMERA_SCAN);
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold btn-primary text-white flex items-center gap-1.5 shadow-sm"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>Scan</span>
-              </button>
-
-              <button
-                type="button"
-                id="desk_nav_settings"
-                onClick={() => setActiveScreen(ScreenId.PROFILE_SETTINGS)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  [ScreenId.PROFILE_SETTINGS, ScreenId.TEST_CLASS_SETTINGS].includes(activeScreen) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Settings</span>
-              </button>
-            </div>
-
             {/* Right controls */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               
@@ -822,6 +1000,18 @@ export default function App() {
                 </select>
               </div>
 
+              {/* Refer & Earn Button */}
+              <button
+                id="btn_open_referral_hub_header"
+                onClick={() => setIsReferralModalOpen(true)}
+                className="hidden xs:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-400/20 hover:bg-amber-400/30 text-amber-900 border border-amber-400/40 transition cursor-pointer"
+                title="Refer Colleagues & Earn Points"
+              >
+                <Gift className="w-3.5 h-3.5 text-amber-600" />
+                <span>Refer & Earn</span>
+                <span className="bg-amber-400 text-slate-950 font-mono text-[10px] px-1.5 py-0.2 rounded-full font-black">+{userProfile.rewardPoints || 0} Pts</span>
+              </button>
+
               {/* Profile Avatar Trigger */}
               <button 
                 id="btn_profile_trigger"
@@ -829,7 +1019,7 @@ export default function App() {
                 className="focus:outline-none p-0.5 rounded-full hover:ring-2 hover:ring-emerald-400 transition"
                 title="Profile & Settings"
               >
-                <TeacherAvatar className="w-8 h-8 sm:w-9 sm:h-9 object-cover rounded-full" />
+                <TeacherAvatar src={userProfile.avatarUrl} className="w-8 h-8 sm:w-9 sm:h-9 object-cover rounded-full" />
               </button>
             </div>
           </div>
@@ -913,7 +1103,6 @@ export default function App() {
             </div>
             
             <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5 md:gap-4">
-              
               {/* Card 1: Live OMR Camera Scan */}
               <button
                 id="card_action_scan"
@@ -922,15 +1111,15 @@ export default function App() {
                   setActiveScreen(ScreenId.CAMERA_SCAN);
                 }}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#5c94ff)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(59,111,245,0.1)',border:'1px solid rgba(59,111,245,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#5c94ff)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(59,111,245,0.12)',border:'1px solid rgba(59,111,245,0.2)'}}>
                   <Camera className="w-5 h-5" style={{color:'#3b6ff5'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Scan Sheets</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Camera viewfinder for instant OMR bubble scanning.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Scan Sheets</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Camera viewfinder for instant OMR bubble scanning.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,111,245,0.1)',color:'#3b6ff5',border:'1px solid rgba(59,111,245,0.2)'}}>Fast Engine</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,111,245,0.12)',color:'#3b6ff5',border:'1px solid rgba(59,111,245,0.25)'}}>Fast Engine</span>
               </button>
 
               {/* Card 2: Answer Keys */}
@@ -938,15 +1127,15 @@ export default function App() {
                 id="card_action_keys"
                 onClick={() => setActiveScreen(ScreenId.SAVED_ANSWER_KEYS)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#6ee7b7)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#6ee7b7)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
                   <FileText className="w-5 h-5" style={{color:'#10b981'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Answer Keys</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Configure master keys and create test patterns.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Answer Keys</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Configure master keys and create test patterns.</p>
                 </div>
-                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1" style={{color:'#e2e8f0'}} />
+                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1.5 text-slate-400 dark:text-slate-500" />
               </button>
 
               {/* Card 3: Daily Attendance */}
@@ -954,15 +1143,15 @@ export default function App() {
                 id="card_action_attendance"
                 onClick={() => setActiveScreen(ScreenId.ATTENDANCE_SHEET)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#fbbf24)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#fbbf24)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.2)'}}>
                   <Users className="w-5 h-5" style={{color:'#f59e0b'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Attendance</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Daily paperless roll-call with presence percentages.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Attendance</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Daily paperless roll-call with presence percentages.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(245,158,11,0.1)',color:'#d97706',border:'1px solid rgba(245,158,11,0.2)'}}>NEW</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(245,158,11,0.12)',color:'#d97706',border:'1px solid rgba(245,158,11,0.25)'}}>NEW</span>
               </button>
 
               {/* Card 4: Test Setup */}
@@ -970,15 +1159,15 @@ export default function App() {
                 id="card_action_settings"
                 onClick={() => setActiveScreen(ScreenId.TEST_CLASS_SETTINGS)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#64748b,#94a3b8)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(100,116,139,0.1)',border:'1px solid rgba(100,116,139,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#64748b,#94a3b8)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(100,116,139,0.12)',border:'1px solid rgba(100,116,139,0.2)'}}>
                   <Sliders className="w-5 h-5" style={{color:'#64748b'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Test Setup</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Configure class rosters, questions count & grade thresholds.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Test Setup</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Configure class rosters, questions count & grade thresholds.</p>
                 </div>
-                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1" style={{color:'#e2e8f0'}} />
+                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1.5 text-slate-400 dark:text-slate-500" />
               </button>
 
               {/* Card 5: Terminal Report Builder */}
@@ -986,15 +1175,15 @@ export default function App() {
                 id="card_action_terminal_report"
                 onClick={() => setActiveScreen(ScreenId.TERMINAL_REPORT)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#8b5cf6,#a78bfa)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(139,92,246,0.1)',border:'1px solid rgba(139,92,246,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#8b5cf6,#a78bfa)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(139,92,246,0.12)',border:'1px solid rgba(139,92,246,0.2)'}}>
                   <Award className="w-5 h-5" style={{color:'#8b5cf6'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Terminal Reports</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Compile grades, assign ranks & bulk print end-of-term reports.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Terminal Reports</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Compile grades, assign ranks & bulk print end-of-term reports.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(139,92,246,0.1)',color:'#8b5cf6',border:'1px solid rgba(139,92,246,0.2)'}}>GES</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(139,92,246,0.12)',color:'#8b5cf6',border:'1px solid rgba(139,92,246,0.25)'}}>GES</span>
               </button>
 
               {/* Card 6: Progress Tracker */}
@@ -1002,15 +1191,15 @@ export default function App() {
                 id="card_action_trend_tracker"
                 onClick={() => setActiveScreen(ScreenId.STUDENT_TREND_TRACKER)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#06b6d4,#67e8f9)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(6,182,212,0.1)',border:'1px solid rgba(6,182,212,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#06b6d4,#67e8f9)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(6,182,212,0.12)',border:'1px solid rgba(6,182,212,0.2)'}}>
                   <TrendingUp className="w-5 h-5" style={{color:'#06b6d4'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Trend Tracker</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Trace individual marks across weeks. Auto growth indicators.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Trend Tracker</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Trace individual marks across weeks. Auto growth indicators.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(6,182,212,0.1)',color:'#0891b2',border:'1px solid rgba(6,182,212,0.2)'}}>NEW</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(6,182,212,0.12)',color:'#0891b2',border:'1px solid rgba(6,182,212,0.25)'}}>NEW</span>
               </button>
 
               {/* Card 7: Lesson Planner */}
@@ -1018,15 +1207,15 @@ export default function App() {
                 id="card_action_lesson_planner"
                 onClick={() => setActiveScreen(ScreenId.LESSON_PLANNER)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#f9a8d4)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(236,72,153,0.1)',border:'1px solid rgba(236,72,153,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#f9a8d4)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(236,72,153,0.12)',border:'1px solid rgba(236,72,153,0.2)'}}>
                   <BookOpen className="w-5 h-5" style={{color:'#ec4899'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Lesson Planner</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Draft objectives, TLMs and evaluation methods. Print-ready.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Lesson Planner</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Draft objectives, TLMs and evaluation methods. Print-ready.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.1)',color:'#db2777',border:'1px solid rgba(236,72,153,0.2)'}}>NEW</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.12)',color:'#db2777',border:'1px solid rgba(236,72,153,0.25)'}}>NEW</span>
               </button>
 
               {/* Card 8: Seating Chart */}
@@ -1034,15 +1223,15 @@ export default function App() {
                 id="card_action_seating_chart"
                 onClick={() => setActiveScreen(ScreenId.SEATING_CHART)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f97316,#fdba74)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(249,115,22,0.1)',border:'1px solid rgba(249,115,22,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f97316,#fdba74)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(249,115,22,0.12)',border:'1px solid rgba(249,115,22,0.2)'}}>
                   <Users className="w-5 h-5" style={{color:'#f97316'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Seating Planner</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Arrange desks, assign seats & anti-cheating exam layouts.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Seating Planner</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Arrange desks, assign seats & anti-cheating exam layouts.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(249,115,22,0.1)',color:'#ea580c',border:'1px solid rgba(249,115,22,0.2)'}}>NEW</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(249,115,22,0.12)',color:'#ea580c',border:'1px solid rgba(249,115,22,0.25)'}}>NEW</span>
               </button>
 
               {/* Card 9: School Collections Hub */}
@@ -1050,15 +1239,15 @@ export default function App() {
                 id="card_action_collections_hub"
                 onClick={() => setActiveScreen(ScreenId.COLLECTIONS_HUB)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#e94560)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(59,111,245,0.1)',border:'1px solid rgba(59,111,245,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#e94560)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(59,111,245,0.12)',border:'1px solid rgba(59,111,245,0.2)'}}>
                   <DollarSign className="w-5 h-5" style={{color:'#3b6ff5'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Collections Hub</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Fees, PTA & Canteen payments, Cash/MoMo, A6 receipts & SMS proofs.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Collections Hub</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Fees, PTA & Canteen payments, Cash/MoMo, A6 receipts & SMS proofs.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.1)',color:'#059669',border:'1px solid rgba(16,185,129,0.2)'}}>FINANCE</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.12)',color:'#059669',border:'1px solid rgba(16,185,129,0.25)'}}>FINANCE</span>
               </button>
 
               {/* Card 10: Resource Distribution Tracker */}
@@ -1066,15 +1255,15 @@ export default function App() {
                 id="card_action_resource_tracker"
                 onClick={() => setActiveScreen(ScreenId.RESOURCE_TRACKER)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#3b82f6)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#3b82f6)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
                   <Package className="w-5 h-5" style={{color:'#10b981'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Resource Tracker</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Cabinet textbook allocations, serial barcoding & bulk check-offs.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Resource Tracker</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Cabinet textbook allocations, serial barcoding & bulk check-offs.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,130,246,0.1)',color:'#2563eb',border:'1px solid rgba(59,130,246,0.2)'}}>INVENTORY</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,130,246,0.12)',color:'#2563eb',border:'1px solid rgba(59,130,246,0.25)'}}>INVENTORY</span>
               </button>
 
               {/* Card 11: Exam Builder (MCQ/Theory) */}
@@ -1082,18 +1271,53 @@ export default function App() {
                 id="card_action_exam_builder"
                 onClick={() => setActiveScreen(ScreenId.EXAM_BUILDER)}
                 className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#8b5cf6)'}} />
-                <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(236,72,153,0.1)',border:'1px solid rgba(236,72,153,0.15)'}}>
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#8b5cf6)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(236,72,153,0.12)',border:'1px solid rgba(236,72,153,0.2)'}}>
                   <FileText className="w-5 h-5" style={{color:'#ec4899'}} />
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-tight">Exam Builder</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'#94a3b8'}}>Fast mobile entry, 2-column paper-saving PDF & instant OMR key generator.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Exam Builder</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Fast mobile entry, 2-column paper-saving PDF & instant OMR key generator.</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.1)',color:'#db2777',border:'1px solid rgba(236,72,153,0.2)'}}>PRINT PDF</span>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.12)',color:'#db2777',border:'1px solid rgba(236,72,153,0.25)'}}>PRINT PDF</span>
               </button>
 
-              {/* Card 11: Headteacher Panel */}
+              {/* Card 12: WAEC Question Bank & Points Rewards */}
+              <button
+                id="card_action_question_bank"
+                onClick={() => setActiveScreen(ScreenId.QUESTION_BANK)}
+                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#059669)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
+                  <BookOpen className="w-5 h-5" style={{color:'#10b981'}} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">WAEC Question Bank</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Snap papers for +50 Pts, refer colleagues for +100 Pts & redeem Pro plans.</p>
+                </div>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.12)',color:'#059669',border:'1px solid rgba(16,185,129,0.25)'}}>EARN POINTS</span>
+              </button>
+
+              {/* Card 13: Refer Colleagues & Earn Points Hub */}
+              <button
+                id="card_action_referral_hub"
+                onClick={() => setIsReferralModalOpen(true)}
+                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#eab308)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.2)'}}>
+                  <Gift className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Refer & Earn Pro Plans</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Share your referral link on WhatsApp. Earn 100 pts per signup to unlock Pro features.</p>
+                </div>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                  +100 PTS / REFERRAL
+                </span>
+              </button>
+
+              {/* Card 14: Headteacher Panel */}
               {userRole === "headteacher" && (
                 <button
                   id="card_action_headteacher_panel"
@@ -1101,8 +1325,8 @@ export default function App() {
                   className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-hover"
                   style={{background:'linear-gradient(135deg,#0a1433,#0f1f52)',border:'1px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 20px rgba(59,111,245,0.25)'}}
                 >
-                  <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{background:'linear-gradient(90deg,#90b8ff,#3b6ff5)'}} />
-                  <div className="p-2.5 rounded-xl w-10 h-10 flex items-center justify-center" style={{background:'rgba(165,180,252,0.15)',border:'1px solid rgba(165,180,252,0.2)'}}>
+                  <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#90b8ff,#3b6ff5)'}} />
+                  <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(165,180,252,0.15)',border:'1px solid rgba(165,180,252,0.2)'}}>
                     <Building2 className="w-5 h-5" style={{color:'#90b8ff'}} />
                   </div>
                   <div>
@@ -2083,84 +2307,166 @@ export default function App() {
       : 0;
 
     return (
-      <div id="screen_profile_settings" className="min-h-screen mesh-light flex flex-col pb-16">
+      <div id="screen_profile_settings" className="min-h-screen mesh-light flex flex-col pb-20">
         {/* Header */}
-        <div className="glass-panel p-4 px-6 flex items-center justify-between sticky top-0 z-30">
-          <div className="flex items-center gap-3">
+        <div className="glass-panel p-3 sm:p-4 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-2.5 sm:gap-3">
             <button 
               id="btn_back_profile_settings"
               onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
-              className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition"
+              className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h3 className="text-sm font-extrabold text-slate-900">User Profile & Preferences</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Manage teacher account, school profile & app settings</p>
+              <h3 className="text-xs sm:text-sm font-extrabold text-slate-900">User Profile & Preferences</h3>
+              <p className="text-[9px] sm:text-[10px] text-slate-500 font-medium">Manage teacher account, school profile & app settings</p>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-2xl mx-auto w-full space-y-6 animate-fade-in">
+        <div className="flex-1 p-3.5 sm:p-6 lg:p-8 max-w-2xl mx-auto w-full space-y-4 sm:space-y-6 animate-fade-in">
           
           {/* Hero Profile Card */}
-          <div className="rounded-3xl p-6 sm:p-8 relative overflow-hidden text-white" style={{background:'linear-gradient(135deg,#0a1433 0%,#0f1f52 50%,#1a0f2e 100%)', boxShadow:'0 16px 40px -10px rgba(15,31,82,0.35)'}}>
+          <div className="rounded-3xl p-4 sm:p-8 relative overflow-hidden text-white" style={{background:'linear-gradient(135deg,#0a1433 0%,#0f1f52 50%,#1a0f2e 100%)', boxShadow:'0 16px 40px -10px rgba(15,31,82,0.35)'}}>
             <div className="absolute inset-0 omr-watermark opacity-15" />
             <div className="absolute top-0 right-0 w-64 h-64 rounded-full pointer-events-none" style={{background:'radial-gradient(circle,rgba(59,111,245,0.25),transparent 70%)'}} />
             <div className="absolute bottom-0 left-10 w-48 h-48 rounded-full pointer-events-none" style={{background:'radial-gradient(circle,rgba(233,69,96,0.15),transparent 70%)'}} />
 
-            <div className="relative z-10 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-5">
-              {/* Avatar with status ring */}
-              <div className="relative shrink-0">
-                <TeacherAvatar className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-white/20 shadow-2xl object-cover" />
-                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <div className="relative z-10 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-4 sm:gap-5">
+              {/* Avatar with photo upload camera overlay & status ring */}
+              <div className="relative shrink-0 group">
+                <TeacherAvatar src={userProfile.avatarUrl} className="w-16 h-16 sm:w-24 sm:h-24 rounded-2xl border-2 border-emerald-400/90 shadow-2xl object-cover" />
+                
+                {/* Upload camera hover overlay */}
+                <label 
+                  htmlFor="avatar-upload-input" 
+                  className="absolute inset-0 rounded-2xl bg-slate-950/60 backdrop-blur-xs flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer text-white"
+                  title="Upload profile photo"
+                >
+                  <Camera className="w-5 h-5 text-emerald-400" />
+                  <span className="text-[9px] font-bold mt-1">Upload</span>
+                </label>
+                <input 
+                  id="avatar-upload-input" 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setUserProfile(prev => ({ ...prev, avatarUrl: reader.result as string }));
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }} 
+                />
+
+                <div className="absolute -bottom-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
+                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-white animate-pulse" />
                 </div>
               </div>
               
               <div className="flex-1 space-y-2 w-full">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                   <div>
-                    <h4 className="text-xl font-black text-white tracking-tight">{userProfile.fullName}</h4>
-                    <p className="text-xs text-blue-200/80 font-mono mt-0.5">{userProfile.email || 'Guest Offline Mode'}</p>
+                    <h4 className="text-lg sm:text-xl font-black text-white tracking-tight">{userProfile.fullName}</h4>
+                    <p className="text-[11px] sm:text-xs text-blue-200/80 font-mono mt-0.5 break-all">{userProfile.email || 'Guest Offline Mode'}</p>
                   </div>
                   
-                  <span className="self-center sm:self-start inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full" style={{background: userProfile.isLoggedIn ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)', color: userProfile.isLoggedIn ? '#6ee7b7' : '#fde68a', border: userProfile.isLoggedIn ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(245,158,11,0.3)'}}>
+                  <span className="self-center sm:self-start inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shrink-0" style={{background: userProfile.isLoggedIn ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)', color: userProfile.isLoggedIn ? '#6ee7b7' : '#fde68a', border: userProfile.isLoggedIn ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(245,158,11,0.3)'}}>
                     {userProfile.isLoggedIn ? '✓ PRO CLOUD' : 'GUEST OFFLINE'}
                   </span>
                 </div>
 
-                <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                <div className="pt-1 flex flex-wrap items-center justify-center sm:justify-start gap-2">
                   <button
                     onClick={() => setIsSchoolModalOpen(true)}
                     className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl transition" style={{background:'rgba(255,255,255,0.12)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff'}}
                   >
-                    <Building2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>{activeSchoolMode === "linked" ? (linkedSchool?.name || "St. Peter's Basic School") : "Personal Workspace"}</span>
+                    <Building2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate max-w-[200px] sm:max-w-none">{activeSchoolMode === "linked" ? (linkedSchool?.name || "St. Peter's Basic School") : "Personal Workspace"}</span>
                   </button>
+
+                  <label
+                    htmlFor="avatar-upload-input"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer" style={{background:'rgba(16,185,129,0.2)', border:'1px solid rgba(16,185,129,0.4)', color:'#6ee7b7'}}
+                  >
+                    <Camera className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>{userProfile.avatarUrl ? "Change Avatar Photo" : "Upload Custom Avatar"}</span>
+                  </label>
+
+                  {userProfile.avatarUrl && (
+                    <button
+                      onClick={() => setUserProfile(prev => ({ ...prev, avatarUrl: undefined }))}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition" style={{background:'rgba(239,68,68,0.15)', border:'1px solid rgba(239,68,68,0.3)', color:'#fca5a5'}}
+                      title="Remove uploaded avatar photo"
+                    >
+                      <span>Reset</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Quick Metrics Bar */}
-            <div className="mt-6 pt-6 border-t border-white/10 grid grid-cols-3 gap-3 text-center">
-              <div className="p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
-                <span className="text-[9px] font-bold uppercase tracking-wider block text-blue-200/70">Sheets Graded</span>
-                <span className="text-base font-black text-white mt-0.5 block">{totalScansCount}</span>
+            <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-white/10 grid grid-cols-3 gap-1.5 sm:gap-3 text-center">
+              <div className="p-2 sm:p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
+                <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider block text-blue-200/70">Sheets Graded</span>
+                <span className="text-sm sm:text-base font-black text-white mt-0.5 block">{totalScansCount}</span>
               </div>
-              <div className="p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
-                <span className="text-[9px] font-bold uppercase tracking-wider block text-emerald-200/70">Class Average</span>
-                <span className="text-base font-black text-white mt-0.5 block">{averageScore}%</span>
+              <div className="p-2 sm:p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
+                <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider block text-emerald-200/70">Class Average</span>
+                <span className="text-sm sm:text-base font-black text-white mt-0.5 block">{averageScore}%</span>
               </div>
-              <div className="p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
-                <span className="text-[9px] font-bold uppercase tracking-wider block text-amber-200/70">Cloud Sync</span>
-                <span className="text-xs font-bold text-white mt-1 block">{userProfile.syncEnabled ? "Auto-Sync" : "Local Cache"}</span>
+              <div className="p-2 sm:p-2.5 rounded-2xl" style={{background:'rgba(255,255,255,0.06)'}}>
+                <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider block text-amber-200/70">Cloud Sync</span>
+                <span className="text-[11px] sm:text-xs font-bold text-white mt-0.5 block">{userProfile.syncEnabled ? "Auto-Sync" : "Local Cache"}</span>
               </div>
             </div>
           </div>
 
+          {/* Quick Actions Bar for Referral & Subscription */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Referral Card */}
+            <div 
+              onClick={() => setIsReferralModalOpen(true)}
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl p-4 shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <Gift className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold">Refer Teachers & Earn</h5>
+                  <p className="text-[10px] text-blue-100 font-medium">Balance: {userProfile.rewardPoints || 0} Points</p>
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-white/80 shrink-0" />
+            </div>
+
+            {/* Subscription Card */}
+            <div 
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-2xl p-4 shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <Sparkles className="w-5 h-5 text-emerald-200" />
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold">Subscription & Passes</h5>
+                  <p className="text-[10px] text-emerald-100 font-medium">{userProfile.activeSubscriptionPlan || 'Free Tier (50 scans/mo)'}</p>
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-white/80 shrink-0" />
+            </div>
+          </div>
+
           {/* Preferences & Settings Section */}
-          <div className="glass-card rounded-3xl p-6 space-y-5">
+          <div className="glass-card rounded-3xl p-4 sm:p-6 space-y-4 sm:space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-blue-500" />
@@ -2168,19 +2474,19 @@ export default function App() {
               </h4>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {/* Feature 1: Dark Mode */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl hover:bg-slate-50/80 transition" style={{border:'1px solid #f1f5f9'}}>
-                <div className="space-y-0.5 max-w-[80%]">
+              <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-2xl hover:bg-slate-50/80 transition gap-3" style={{border:'1px solid #f1f5f9'}}>
+                <div className="space-y-0.5 flex-1 pr-1">
                   <h5 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                    <span>High Contrast Dark Mode</span>
+                    <span>Dark Mode</span>
                   </h5>
-                  <p className="text-[11px] text-slate-400 leading-tight">Switch theme for comfortable night-time grading & low lighting.</p>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-tight">Switch theme for comfortable night-time grading & low lighting.</p>
                 </div>
                 <button
                   id="btn_toggle_dark_mode"
                   onClick={() => setIsDarkMode(prev => !prev)}
-                  className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none ${
+                  className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none shrink-0 ${
                     isDarkMode ? 'bg-blue-600' : 'bg-slate-200'
                   }`}
                   aria-label="Toggle Dark Mode"
@@ -2192,28 +2498,28 @@ export default function App() {
               </div>
 
               {/* Feature 2: Corner Snapping */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl hover:bg-slate-50/80 transition" style={{border:'1px solid #f1f5f9'}}>
-                <div className="space-y-0.5 max-w-[80%]">
+              <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-2xl hover:bg-slate-50/80 transition gap-3" style={{border:'1px solid #f1f5f9'}}>
+                <div className="space-y-0.5 flex-1 pr-1">
                   <h5 className="text-xs font-bold text-slate-800">OMR Camera Corner Assistance</h5>
-                  <p className="text-[11px] text-slate-400 leading-tight">Automatically locks camera guidelines around OMR bubble sheets.</p>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-tight">Automatically locks camera guidelines around OMR bubble sheets.</p>
                 </div>
-                <div className="w-12 h-6 bg-emerald-500 rounded-full p-1 cursor-default">
+                <div className="w-12 h-6 bg-emerald-500 rounded-full p-1 cursor-default shrink-0">
                   <div className="bg-white w-4 h-4 rounded-full shadow translate-x-6" />
                 </div>
               </div>
 
               {/* Feature 3: Auto Sync over Data */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl hover:bg-slate-50/80 transition" style={{border:'1px solid #f1f5f9'}}>
-                <div className="space-y-0.5 max-w-[80%]">
+              <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-2xl hover:bg-slate-50/80 transition gap-3" style={{border:'1px solid #f1f5f9'}}>
+                <div className="space-y-0.5 flex-1 pr-1">
                   <h5 className="text-xs font-bold text-slate-800">Automatic Sync over Mobile Data</h5>
-                  <p className="text-[11px] text-slate-400 leading-tight">Syncs graded scores immediately when cellular data is connected.</p>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-tight">Syncs graded scores immediately when cellular data is connected.</p>
                 </div>
                 <button
                   id="btn_toggle_sync_pref"
                   onClick={() => {
                     setUserProfile(p => ({ ...p, syncEnabled: !p.syncEnabled }));
                   }}
-                  className={`w-12 h-6 rounded-full p-1 transition ${
+                  className={`w-12 h-6 rounded-full p-1 transition shrink-0 ${
                     userProfile.syncEnabled ? 'bg-emerald-500' : 'bg-slate-200'
                   }`}
                 >
@@ -2391,6 +2697,35 @@ export default function App() {
               setActiveScreen(ScreenId.DASHBOARD);
             }} 
             schoolProfile={linkedSchool}
+            onUpdateSchoolProfile={(updated) => setLinkedSchool(updated)}
+            onLogout={handleLogoutHeadteacher}
+            vouchersList={vouchersList}
+            onAddVoucher={(newV) => setVouchersList(prev => [newV, ...prev])}
+            userProfile={userProfile}
+            onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+            isDarkMode={isDarkMode}
+            onToggleDarkMode={() => setIsDarkMode(prev => !prev)}
+          />
+        );
+      case ScreenId.SUPER_ADMIN_PANEL:
+        return (
+          <SuperAdminPanel
+            onBack={() => {
+              setUserRole("teacher");
+              setActiveScreen(ScreenId.DASHBOARD);
+            }}
+            onLogout={handleLogoutHeadteacher}
+            vouchersList={vouchersList}
+            onAddVoucher={(newV) => setVouchersList(prev => [newV, ...prev])}
+            onOpenCertificate={() => setActiveScreen(ScreenId.WORKSHOP_CERTIFICATE)}
+          />
+        );
+      case ScreenId.WORKSHOP_CERTIFICATE:
+        return (
+          <WorkshopCertificateModule
+            onBack={() => setActiveScreen(ScreenId.SUPER_ADMIN_PANEL)}
+            defaultTeacherName={userProfile.fullName || "Teacher Sarah Jenkins"}
+            defaultSchoolName={linkedSchool?.name || "St. Peter's Basic School"}
           />
         );
       case ScreenId.COLLECTIONS_HUB:
@@ -2417,6 +2752,8 @@ export default function App() {
             schoolProfile={linkedSchool}
             selectedClass={selectedAssignedClass}
             setSelectedClass={setSelectedAssignedClass}
+            userProfile={userProfile}
+            onTriggerPaywall={(feat, desc) => handleTriggerPaywall(feat, desc)}
             onSaveMasterKeyAndScan={(savedKey) => {
               setSavedKeys(prev => [savedKey, ...prev.filter(k => k.id !== savedKey.id)]);
               setActiveAnswerKey(savedKey);
@@ -2424,17 +2761,223 @@ export default function App() {
             }}
           />
         );
+      case ScreenId.QUESTION_BANK:
+        return (
+          <QuestionBankModule
+            onBack={() => setActiveScreen(ScreenId.DASHBOARD)}
+            userProfile={userProfile}
+            setUserProfile={setUserProfile}
+            onOpenExamBuilder={() => setActiveScreen(ScreenId.EXAM_BUILDER)}
+          />
+        );
       default:
         return renderSplashScreen();
     }
   };
 
-  // Determine if bottom navigation should be visible
-  const isNavVisible = ![ScreenId.SPLASH, ScreenId.ONBOARDING, ScreenId.AUTH, ScreenId.CAMERA_SCAN, ScreenId.HEADTEACHER_PANEL].includes(activeScreen);
+  // Determine if bottom navigation & sidebar should be visible
+  const isNavVisible = ![ScreenId.SPLASH, ScreenId.ONBOARDING, ScreenId.AUTH, ScreenId.CAMERA_SCAN, ScreenId.HEADTEACHER_PANEL, ScreenId.SUPER_ADMIN_PANEL, ScreenId.WORKSHOP_CERTIFICATE].includes(activeScreen);
+
+  // Desktop Side Navigation Sidebar
+  const renderDesktopSidebar = () => {
+    if (!isNavVisible) return null;
+
+    const navSections = [
+      {
+        title: "OVERVIEW",
+        items: [
+          { id: "desk_side_dashboard", label: "Dashboard", icon: Building2, screen: ScreenId.DASHBOARD, activeScreens: [ScreenId.DASHBOARD] },
+        ]
+      },
+      {
+        title: "STUDENTS & ACADEMICS",
+        items: [
+          { id: "desk_side_attendance", label: "Attendance Sheet", icon: Users, screen: ScreenId.ATTENDANCE_SHEET, activeScreens: [ScreenId.ATTENDANCE_SHEET] },
+          { id: "desk_side_trends", label: "Student Trends", icon: TrendingUp, screen: ScreenId.STUDENT_TREND_TRACKER, activeScreens: [ScreenId.STUDENT_TREND_TRACKER] },
+          { id: "desk_side_seating", label: "Seating Chart", icon: Layers, screen: ScreenId.SEATING_CHART, activeScreens: [ScreenId.SEATING_CHART] },
+        ]
+      },
+      {
+        title: "ASSESSMENTS & REPORTS",
+        items: [
+          { id: "desk_side_questionbank", label: "WAEC Question Bank", icon: BookOpen, screen: ScreenId.QUESTION_BANK, activeScreens: [ScreenId.QUESTION_BANK] },
+          { id: "desk_side_terminal", label: "Terminal Reports", icon: FileText, screen: ScreenId.TERMINAL_REPORT, activeScreens: [ScreenId.TERMINAL_REPORT] },
+          { id: "desk_side_exambuilder", label: "Exam Builder", icon: BookOpen, screen: ScreenId.EXAM_BUILDER, activeScreens: [ScreenId.EXAM_BUILDER] },
+          { id: "desk_side_answerkeys", label: "Master Answer Keys", icon: CheckCircle2, screen: ScreenId.SAVED_ANSWER_KEYS, activeScreens: [ScreenId.SAVED_ANSWER_KEYS] },
+          { id: "desk_side_history", label: "Graded Results", icon: History, screen: ScreenId.RESULTS_HISTORY, activeScreens: [ScreenId.RESULTS_HISTORY, ScreenId.RESULTS_SUMMARY] },
+          { id: "desk_side_lessons", label: "Lesson Planner", icon: Sparkles, screen: ScreenId.LESSON_PLANNER, activeScreens: [ScreenId.LESSON_PLANNER] },
+        ]
+      },
+      {
+        title: "FINANCE & MANAGEMENT",
+        items: [
+          { id: "desk_side_collections", label: "Fee Collections", icon: DollarSign, screen: ScreenId.COLLECTIONS_HUB, activeScreens: [ScreenId.COLLECTIONS_HUB] },
+          { id: "desk_side_resources", label: "Resource Tracker", icon: Package, screen: ScreenId.RESOURCE_TRACKER, activeScreens: [ScreenId.RESOURCE_TRACKER] },
+        ]
+      },
+      {
+        title: "SETTINGS & SYSTEM",
+        items: [
+          { id: "desk_side_settings", label: "Profile & Account", icon: User, screen: ScreenId.PROFILE_SETTINGS, activeScreens: [ScreenId.PROFILE_SETTINGS] },
+          { id: "desk_side_classconfig", label: "Class Test Config", icon: Sliders, screen: ScreenId.TEST_CLASS_SETTINGS, activeScreens: [ScreenId.TEST_CLASS_SETTINGS] },
+        ]
+      }
+    ];
+
+    return (
+      <aside className="hidden md:flex flex-col w-64 lg:w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shrink-0 h-screen sticky top-0 z-40 shadow-sm overflow-y-auto">
+        {/* Brand & Logo Header */}
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="relative shrink-0">
+              <img 
+                src={appLogo} 
+                alt="Teacher's Toolkit Logo" 
+                className="w-10 h-10 rounded-xl object-cover shadow-sm"
+                style={{border:'2.5px solid #10b981',boxShadow:'0 0 12px rgba(16,185,129,0.4)'}}
+              />
+              <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center bg-emerald-500">
+                <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+              </div>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xs font-black tracking-wider truncate text-emerald-600 dark:text-emerald-400">
+                TEACHER'S TOOLKit
+              </h1>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                Classroom Command
+              </p>
+            </div>
+          </div>
+
+          {/* School Mode Badge / Trigger */}
+          <button
+            type="button"
+            onClick={() => setIsSchoolModalOpen(true)}
+            className="w-full flex items-center justify-between p-2 rounded-xl text-left bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-800 transition group"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              {activeSchoolMode === "linked" ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+              )}
+              <div className="min-w-0">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">School Mode</span>
+                <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 truncate block">
+                  {activeSchoolMode === "linked" ? (linkedSchool?.name || "St. Peter's Basic") : "Personal Mode"}
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition" />
+          </button>
+
+          {/* Subscription Plan & Usage Badge */}
+          <button
+            type="button"
+            onClick={() => setIsSubscriptionModalOpen(true)}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl text-left bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/40 border border-emerald-200/80 dark:border-emerald-800/80 hover:border-emerald-400 transition group shadow-sm"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">
+                    {userProfile.activeSubscriptionPlan} Plan
+                  </span>
+                </div>
+                <span className="text-xs font-black text-slate-800 dark:text-slate-100 truncate block">
+                  {hasProAccess(userProfile) ? 'Unlimited OMR & Reports' : `${Math.max(0, (userProfile.maxFreeScansPerMonth || 50) - (userProfile.scansThisMonth || 0))} Scans Left`}
+                </span>
+              </div>
+            </div>
+            <div className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold group-hover:scale-105 transition">
+              Upgrade
+            </div>
+          </button>
+        </div>
+
+        {/* Action Button: Start New Scan */}
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => {
+              if (savedKeys.length > 0) setActiveAnswerKey(savedKeys[0]);
+              setActiveScreen(ScreenId.CAMERA_SCAN);
+            }}
+            className="w-full py-2.5 px-3 rounded-xl btn-primary flex items-center justify-center gap-2 text-xs font-black shadow-md hover:shadow-lg transition"
+          >
+            <Camera className="w-4 h-4" />
+            <span>START NEW SCAN</span>
+          </button>
+        </div>
+
+        {/* Side Tabs Navigation Sections */}
+        <div className="flex-1 px-3 py-3 space-y-5 overflow-y-auto">
+          {navSections.map((section, idx) => (
+            <div key={idx} className="space-y-1">
+              <div className="px-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                {section.title}
+              </div>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = item.activeScreens.includes(activeScreen);
+                  return (
+                    <button
+                      key={item.id}
+                      id={item.id}
+                      type="button"
+                      onClick={() => setActiveScreen(item.screen)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition text-left ${
+                        isActive
+                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 shadow-sm border border-emerald-200/60 dark:border-emerald-800/40'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`} />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* User Profile & Footer */}
+        <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="flex items-center justify-between gap-2 p-1.5 rounded-xl">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <TeacherAvatar src={userProfile.avatarUrl} className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700" />
+              <div className="min-w-0">
+                <p className="text-xs font-extrabold text-slate-800 dark:text-slate-200 truncate">{userProfile.fullName}</p>
+                <p className="text-[10px] text-slate-400 font-bold truncate">{userRole === "headteacher" ? "Headteacher" : "Subject Teacher"}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveScreen(ScreenId.PROFILE_SETTINGS)}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800 transition"
+              title="Account Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </aside>
+    );
+  };
 
   return (
-    <div className="font-sans antialiased" style={{background:'#f0f4f8',minHeight:'100vh'}}>
-      {renderCurrentScreen()}
+    <div className="font-sans antialiased min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+      <div className="flex min-h-screen">
+        {renderDesktopSidebar()}
+
+        <main className="flex-1 min-w-0 flex flex-col">
+          {renderCurrentScreen()}
+        </main>
+      </div>
 
       {/* ── Premium Bottom Navigation ── */}
       {isNavVisible && (
@@ -2448,8 +2991,7 @@ export default function App() {
               onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
               className={`nav-tab ${activeScreen === ScreenId.DASHBOARD ? 'active' : 'inactive'}`}
             >
-              {activeScreen === ScreenId.DASHBOARD && <div className="nav-tab-dot" />}
-              <Building2 className="w-5 h-5" />
+              <Building2 className="w-5 h-5 shrink-0" />
               <span>Home</span>
             </button>
 
@@ -2462,8 +3004,7 @@ export default function App() {
                 [ScreenId.ATTENDANCE_SHEET, ScreenId.STUDENT_TREND_TRACKER, ScreenId.SEATING_CHART].includes(activeScreen) ? 'active' : 'inactive'
               }`}
             >
-              {[ScreenId.ATTENDANCE_SHEET, ScreenId.STUDENT_TREND_TRACKER, ScreenId.SEATING_CHART].includes(activeScreen) && <div className="nav-tab-dot" />}
-              <Users className="w-5 h-5" />
+              <Users className="w-5 h-5 shrink-0" />
               <span>Students</span>
             </button>
 
@@ -2478,7 +3019,7 @@ export default function App() {
               }}
               title="Start new scan"
             >
-              <Camera className="w-6 h-6" />
+              <Plus className="w-6 h-6 stroke-[2.5] shrink-0" />
             </button>
 
             {/* Tab 3: Reports */}
@@ -2490,8 +3031,7 @@ export default function App() {
                 [ScreenId.TERMINAL_REPORT, ScreenId.RESULTS_HISTORY, ScreenId.SAVED_ANSWER_KEYS, ScreenId.LESSON_PLANNER].includes(activeScreen) ? 'active' : 'inactive'
               }`}
             >
-              {[ScreenId.TERMINAL_REPORT, ScreenId.RESULTS_HISTORY, ScreenId.SAVED_ANSWER_KEYS, ScreenId.LESSON_PLANNER].includes(activeScreen) && <div className="nav-tab-dot" />}
-              <FileText className="w-5 h-5" />
+              <FileText className="w-5 h-5 shrink-0" />
               <span>Reports</span>
             </button>
 
@@ -2504,8 +3044,7 @@ export default function App() {
                 [ScreenId.PROFILE_SETTINGS, ScreenId.TEST_CLASS_SETTINGS].includes(activeScreen) ? 'active' : 'inactive'
               }`}
             >
-              {[ScreenId.PROFILE_SETTINGS, ScreenId.TEST_CLASS_SETTINGS].includes(activeScreen) && <div className="nav-tab-dot" />}
-              <Settings className="w-5 h-5" />
+              <Settings className="w-5 h-5 shrink-0" />
               <span>Settings</span>
             </button>
 
@@ -2525,6 +3064,46 @@ export default function App() {
         }}
         customBranding={customBranding}
         onUpdateBranding={(branding) => setCustomBranding(branding)}
+      />
+
+      <SubscriptionModal
+        isOpen={isSubscriptionModalOpen}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={(updated) => {
+          setUserProfile((prev) => ({ ...prev, ...updated }));
+        }}
+        onOpenReferralHub={() => {
+          setIsSubscriptionModalOpen(false);
+          setIsReferralModalOpen(true);
+        }}
+      />
+
+      <ReferralHubModal
+        isOpen={isReferralModalOpen}
+        onClose={() => setIsReferralModalOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={(updated) => {
+          setUserProfile((prev) => ({ ...prev, ...updated }));
+        }}
+      />
+
+      <PaywallModal
+        isOpen={isPaywallModalOpen}
+        onClose={() => setIsPaywallModalOpen(false)}
+        title={paywallInfo.title}
+        description={paywallInfo.description}
+        featureTriggered={paywallInfo.featureTriggered}
+        userProfile={userProfile}
+        onOpenFullSubscriptionHub={() => {
+          setIsSubscriptionModalOpen(true);
+        }}
+        onQuickUpgradePro={() => {
+          setIsSubscriptionModalOpen(true);
+        }}
+        onQuickBuyExamPass={() => {
+          setIsSubscriptionModalOpen(true);
+        }}
       />
     </div>
   );

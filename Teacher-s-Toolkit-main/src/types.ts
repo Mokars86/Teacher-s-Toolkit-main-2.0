@@ -1,11 +1,49 @@
 export interface UserProfile {
   email: string;
   fullName: string;
+  avatarUrl?: string;
   isLoggedIn: boolean;
   isPremium: boolean;
   syncEnabled: boolean;
   offlineCount: number;
+  rewardPoints: number;
+  referralCode: string;
+  referralCount: number;
+  submittedQuestionsCount: number;
+  activeSubscriptionPlan: "Free" | "Teacher Pro" | "School License";
+  scansThisMonth: number;
+  maxFreeScansPerMonth: number;
+  smsCredits: number;
+  maxFreeExamPapers?: number;
+  endOfTermPassExpiry?: string | null; // ISO date string if active
+  schoolLicenseExpiry?: string | null;
 }
+
+export type MobileMoneyProvider = "MTN MoMo" | "Telecel Cash" | "AT Money";
+
+export interface PaymentTransaction {
+  id: string;
+  planOrItemTitle: string;
+  amountGHS: number;
+  provider: MobileMoneyProvider;
+  phoneNumber: string;
+  date: string;
+  status: "completed" | "failed" | "pending";
+  reference: string;
+}
+
+export interface SubscriptionPlanDetails {
+  id: "Free" | "Teacher Pro" | "School License";
+  name: string;
+  priceTag: string;
+  monthlyGHS: number;
+  yearlyGHS?: number;
+  termGHS?: number;
+  tagline: string;
+  popular?: boolean;
+  features: string[];
+}
+
 
 export interface ClassSettings {
   testName: string;
@@ -79,9 +117,12 @@ export enum ScreenId {
   LESSON_PLANNER = "LESSON_PLANNER",
   SEATING_CHART = "SEATING_CHART",
   HEADTEACHER_PANEL = "HEADTEACHER_PANEL",
+  SUPER_ADMIN_PANEL = "SUPER_ADMIN_PANEL",
   COLLECTIONS_HUB = "COLLECTIONS_HUB",
   RESOURCE_TRACKER = "RESOURCE_TRACKER",
-  EXAM_BUILDER = "EXAM_BUILDER"
+  EXAM_BUILDER = "EXAM_BUILDER",
+  QUESTION_BANK = "QUESTION_BANK",
+  WORKSHOP_CERTIFICATE = "WORKSHOP_CERTIFICATE"
 }
 
 // --- EXAM QUESTION BUILDER TYPES ---
@@ -113,6 +154,29 @@ export interface ExamPaper {
   examType: "mcq" | "theory" | "mixed";
   questions: ExamQuestion[];
   createdAt: string;
+}
+
+// --- WAEC / BECE QUESTION BANK SCHEMA ---
+export type ExamLevelType = "WASSCE" | "BECE" | "NOV_DEC";
+
+export interface WAECQuestion {
+  question_id: string;
+  exam_type: ExamLevelType;
+  subject: string;
+  topic: string;
+  year: number;
+  question_text: string;
+  diagram_url?: string | null;
+  options: {
+    A: string;
+    B: string;
+    C: string;
+    D: string;
+  };
+  correct_option: "A" | "B" | "C" | "D";
+  explanation: string;
+  submitted_by?: string;
+  verified?: boolean;
 }
 
 
@@ -168,7 +232,7 @@ export interface ResourceDistribution {
 
 
 export type SchoolMode = "personal" | "linked";
-export type UserRole = "teacher" | "headteacher";
+export type UserRole = "teacher" | "headteacher" | "superadmin";
 
 export interface SchoolProfile {
   id: string;

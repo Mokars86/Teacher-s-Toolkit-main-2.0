@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
+// @ts-ignore
+import appLogo from "../assets/images/app_logo.png";
 import { 
   ArrowLeft, 
   ArrowRight, 
@@ -22,6 +24,7 @@ import {
   RefreshCw,
   Clock,
   UserPlus,
+  UserCheck,
   Trash2,
   CheckCircle2,
   SlidersHorizontal,
@@ -675,13 +678,15 @@ export function TerminalReportModule({
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="w-8 h-8 bg-emerald-600 rounded flex items-center justify-center">
-            <div className="w-4 h-4 border-2 border-white rotate-45 border-t-0 border-l-0"></div>
-          </div>
+          <img 
+            src={appLogo} 
+            alt="TEACHER'S TOOLKit Logo" 
+            className="w-8 h-8 rounded-lg object-cover shadow-sm border border-slate-200" 
+          />
           <div>
-            <span className="text-sm font-black tracking-tight text-emerald-900 uppercase">MarkSwift Terminal</span>
+            <span className="text-sm sm:text-base font-black tracking-tight text-emerald-900 uppercase">TEACHER'S TOOLKit</span>
             <span className="hidden sm:inline text-xs text-slate-400 font-bold tracking-widest uppercase ml-2 px-2 py-0.5 border-l border-slate-200">
-              Report Builder
+              Terminal Reports
             </span>
           </div>
         </div>
@@ -1706,68 +1711,86 @@ export function TerminalReportModule({
                   return (
                     <div 
                       key={std.id}
-                      className="bg-white border border-slate-200 shadow-lg rounded-2xl max-w-2xl mx-auto p-8 relative overflow-hidden flex flex-col justify-between print:border-0 print:shadow-none print:rounded-none print:p-0 print:my-0 page-break-after"
-                      style={{ minHeight: "842px", width: "100%", maxWidth: "595px" }} // Standard A4 Aspect Ratio scaled
+                      className="bg-white border border-slate-200/90 shadow-xl rounded-3xl max-w-2xl mx-auto p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between print:border-0 print:shadow-none print:rounded-none print:p-0 print:my-0 page-break-after"
+                      style={{ minHeight: "842px", width: "100%", maxWidth: "620px" }} // Standard A4 Aspect Ratio scaled
                     >
-                      {/* Paper top accent header */}
-                      <div className="absolute top-0 left-0 right-0 h-2 bg-slate-900 print:hidden" />
+                      {/* Top Accent Gradient Bar */}
+                      <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-emerald-500 via-teal-500 to-blue-600 print:h-1" />
 
-                      {/* Header School / Logo section */}
-                      <div className="border-b-2 border-slate-900 pb-5 space-y-4">
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
-                            <h2 className="text-xl font-black tracking-tight text-slate-900 uppercase">MARK SWIFT ACADEMY</h2>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest font-mono">GES Certified Basic / JHS Terminal Report Card</p>
-                            <p className="text-[9px] text-slate-400 font-mono">Location: Greater Accra Region • P.O. Box GP 1928, Accra</p>
+                      {/* Header School / Logo Section */}
+                      <div className="border-b-2 border-slate-900/90 pb-4 space-y-3 pt-1">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 uppercase">
+                                {linkedSchool?.name || "MARK SWIFT ACADEMY"}
+                              </h2>
+                            </div>
+                            <p className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-widest font-mono flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3 text-emerald-600 inline" />
+                              <span>GES Certified Basic / JHS Terminal Report Card</span>
+                            </p>
+                            <p className="text-[9.5px] text-slate-500 font-medium">
+                              {linkedSchool?.address || "Location: Greater Accra Region • P.O. Box GP 1928, Accra"}
+                            </p>
                           </div>
 
                           {includeLogo && (
-                            <div className="w-14 h-14 bg-emerald-50 border-2 border-emerald-900 rounded-xl flex items-center justify-center shadow-sm shrink-0">
-                              <div className="w-8 h-8 border-4 border-emerald-900 rotate-45 border-t-0 border-l-0 relative">
-                                <div className="absolute inset-0 bg-emerald-900 rotate-45 scale-50" />
-                              </div>
+                            <div className="w-16 h-16 bg-white border-2 border-emerald-600/30 rounded-2xl flex items-center justify-center shadow-md shrink-0 overflow-hidden p-1 ring-2 ring-emerald-500/20">
+                              <img 
+                                src={appLogo} 
+                                alt="Logo" 
+                                className="w-full h-full object-contain rounded-xl" 
+                              />
                             </div>
                           )}
                         </div>
 
-                        {/* Roster & Academic Identifiers Deck */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-[10px] bg-slate-50 p-3 rounded-lg border border-slate-200 font-bold text-slate-600">
+                        {/* Roster & Academic Identifiers Deck (Bento Grid) */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-[10px] bg-gradient-to-br from-emerald-50/60 via-slate-50 to-teal-50/40 p-3 rounded-2xl border border-emerald-200/80 font-bold text-slate-700 shadow-2xs">
                           <div>
-                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block">Student Name</span>
-                            <span className="text-slate-900 uppercase text-xs font-black">{std.name}</span>
+                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block font-mono">Student Name</span>
+                            <span className="text-slate-900 uppercase text-xs font-black tracking-tight">{std.name}</span>
                           </div>
                           <div>
-                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block">Academic Class</span>
-                            <span className="text-slate-900 uppercase">{selectedClass}</span>
+                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block font-mono">Academic Class</span>
+                            <span className="text-slate-900 uppercase text-xs font-bold">{selectedClass}</span>
                           </div>
                           <div>
-                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block">Term Interval</span>
-                            <span className="text-slate-900 uppercase">{currentTerm}</span>
+                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block font-mono">Term Interval</span>
+                            <span className="text-slate-900 uppercase text-xs font-bold">{currentTerm}</span>
                           </div>
                           <div>
-                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block">Roll ID Number</span>
-                            <span className="text-slate-900 font-mono text-xs">{std.rollNumber}</span>
+                            <span className="text-[8px] text-slate-400 uppercase tracking-widest block font-mono">Roll ID Number</span>
+                            <span className="text-emerald-700 font-mono text-xs font-black">{std.rollNumber}</span>
                           </div>
                         </div>
                       </div>
 
                       {/* Core Content: Report Academic Scores Table Grid */}
-                      <div className="my-6 flex-1 space-y-6">
+                      <div className="my-4 flex-1 space-y-5">
                         <div className="space-y-2">
-                          <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Academic Achievement Logs</h4>
-                          <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-1.5">
+                              <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Academic Achievement & Subject Mastery Logs</span>
+                            </h4>
+                            <span className="text-[9px] font-mono text-slate-400 font-bold">Max Marks: 100</span>
+                          </div>
+
+                          <table className="w-full text-left border-collapse border border-slate-200 text-[11px] rounded-xl overflow-hidden shadow-2xs">
                             <thead>
-                              <tr className="bg-slate-100 border-b border-slate-300 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                                <th className="p-2.5 border border-slate-300">SUBJECT ASSESSMENT</th>
-                                <th className="p-2.5 border border-slate-300 w-16 text-center">EXAM RAWS</th>
-                                <th className="p-2.5 border border-slate-300 w-20 text-center">EXAM ({examWeight}%)</th>
-                                <th className="p-2.5 border border-slate-300 w-20 text-center">CA ({100 - examWeight}%)</th>
-                                <th className="p-2.5 border border-slate-300 w-20 text-center bg-slate-200/50 font-black">TOTAL (100)</th>
-                                <th className="p-2.5 border border-slate-300 w-16 text-center">GRADE</th>
+                              <tr className="bg-slate-900 text-white text-[9px] font-black uppercase tracking-wider">
+                                <th className="p-2.5 border-r border-slate-700">SUBJECT ASSESSMENT</th>
+                                <th className="p-2.5 border-r border-slate-700 w-20 text-center font-mono">EXAM RAW</th>
+                                <th className="p-2.5 border-r border-slate-700 w-20 text-center font-mono">EXAM ({examWeight}%)</th>
+                                <th className="p-2.5 border-r border-slate-700 w-20 text-center font-mono">CA ({100 - examWeight}%)</th>
+                                <th className="p-2.5 border-r border-slate-700 w-24 text-center bg-emerald-700 text-white font-black font-mono">TOTAL (100)</th>
+                                <th className="p-2.5 w-20 text-center">GES GRADE</th>
                               </tr>
                             </thead>
-                            <tbody>
-                              {/* Integrated general academic subjects to represent a realistic Ghana Basic/JHS report card */}
+                            <tbody className="divide-y divide-slate-200">
+                              {/* Integrated general academic subjects for Ghana Basic/JHS report card */}
                               {[
                                 { name: "English Language", cw: std.classworkScore, hw: std.homeworkScore, raw: std.examScoreRaw },
                                 { name: "Mathematics", cw: std.classworkScore, hw: std.homeworkScore, raw: std.examScoreRaw },
@@ -1783,16 +1806,16 @@ export function TerminalReportModule({
                                 const subScale = calculateGESGrade(finalTotal);
 
                                 return (
-                                  <tr key={sIdx} className="border-b border-slate-300">
-                                    <td className="p-2.5 border border-slate-300 font-bold text-slate-800">{sub.name}</td>
-                                    <td className="p-2.5 border border-slate-300 text-center font-mono">{sub.raw}/{maxExamValue}</td>
-                                    <td className="p-2.5 border border-slate-300 text-center font-mono">{Math.round(weightedExam)}%</td>
-                                    <td className="p-2.5 border border-slate-300 text-center font-mono">{Math.round(weightedCA)}%</td>
-                                    <td className="p-2.5 border border-slate-300 text-center font-mono bg-slate-50 font-black text-slate-900 text-xs">
+                                  <tr key={sIdx} className={sIdx % 2 === 0 ? "bg-white" : "bg-slate-50/70"}>
+                                    <td className="p-2.5 border-r border-slate-200 font-bold text-slate-900">{sub.name}</td>
+                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{sub.raw}/{maxExamValue}</td>
+                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{Math.round(weightedExam)}%</td>
+                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{Math.round(weightedCA)}%</td>
+                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono bg-emerald-50/80 font-black text-emerald-900 text-xs">
                                       {finalTotal}%
                                     </td>
-                                    <td className="p-2.5 border border-slate-300 text-center">
-                                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider ${subScale.bg} ${subScale.text}`}>
+                                    <td className="p-2.5 text-center">
+                                      <span className={`px-2 py-0.5 rounded-full text-[9.5px] font-black tracking-wider shadow-2xs ${subScale.bg} ${subScale.text}`}>
                                         {subScale.grade}
                                       </span>
                                     </td>
@@ -1803,47 +1826,53 @@ export function TerminalReportModule({
                           </table>
                         </div>
 
-                        {/* Ranks and attendance grid */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Ranks, Class Position & Attendance Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                           
                           {/* Rank details */}
-                          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2">
-                            <h5 className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Enrollment Status</h5>
+                          <div className="bg-gradient-to-br from-slate-50 to-emerald-50/30 border border-slate-200/90 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+                            <h5 className="text-[9px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-1">
+                              <UserCheck className="w-3 h-3 text-emerald-600" />
+                              <span>Enrollment & Position Rank</span>
+                            </h5>
                             <div className="space-y-1.5 text-[10px] text-slate-600 font-bold">
                               {includePosition && (
-                                <div className="flex justify-between">
+                                <div className="flex justify-between items-center">
                                   <span>Position in Class:</span>
-                                  <span className="text-slate-900 font-mono font-black">
+                                  <span className="text-slate-900 font-mono font-black bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-full text-[11px]">
                                     {std.position}<sup>{std.position === 1 ? "st" : std.position === 2 ? "nd" : std.position === 3 ? "rd" : "th"}</sup> of {totalStudents} students
                                   </span>
                                 </div>
                               )}
-                              <div className="flex justify-between">
+                              <div className="flex justify-between items-center">
                                 <span>Term Average Marks:</span>
-                                <span className="text-slate-900 font-mono">{std.totalScore}%</span>
+                                <span className="text-slate-900 font-mono font-black text-xs">{std.totalScore}%</span>
                               </div>
-                              <div className="flex justify-between">
+                              <div className="flex justify-between items-center">
                                 <span>Roster Target Outcome:</span>
-                                <span className="text-emerald-700 uppercase tracking-wider">{scaleResult.remark}</span>
+                                <span className="text-emerald-700 font-black uppercase tracking-wider">{scaleResult.remark}</span>
                               </div>
                             </div>
                           </div>
 
                           {/* Attendance summary */}
-                          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2">
-                            <h5 className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Conduct & Attendance Logs</h5>
+                          <div className="bg-gradient-to-br from-slate-50 to-blue-50/30 border border-slate-200/90 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+                            <h5 className="text-[9px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                              <span>Conduct & Attendance Summary</span>
+                            </h5>
                             <div className="space-y-1.5 text-[10px] text-slate-600 font-bold">
                               {includeAttendance && (
                                 <>
-                                  <div className="flex justify-between">
+                                  <div className="flex justify-between items-center">
                                     <span>Total Session Days:</span>
                                     <span className="text-slate-900 font-mono">{totalDays} Days</span>
                                   </div>
-                                  <div className="flex justify-between">
+                                  <div className="flex justify-between items-center">
                                     <span>Days Student Present:</span>
-                                    <span className="text-emerald-700 font-mono">{std.attendancePresent} Days</span>
+                                    <span className="text-emerald-700 font-mono font-black">{std.attendancePresent} Days</span>
                                   </div>
-                                  <div className="flex justify-between">
+                                  <div className="flex justify-between items-center">
                                     <span>Days Student Absent:</span>
                                     <span className="text-amber-700 font-mono">{std.attendanceAbsent} Days</span>
                                   </div>
@@ -1856,46 +1885,46 @@ export function TerminalReportModule({
                       </div>
 
                       {/* Administrative Comments, Remarks & Signatures */}
-                      <div className="border-t-2 border-slate-300 pt-4 space-y-4">
+                      <div className="border-t-2 border-slate-300/80 pt-3.5 space-y-3.5">
                         
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[10px] text-slate-700">
-                          <div className="space-y-1 bg-slate-50 p-2.5 rounded border border-slate-200">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Class Teacher's Final Remarks</span>
-                            <p className="font-semibold text-slate-800 leading-tight italic">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[10px] text-slate-700">
+                          <div className="space-y-1 bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block font-mono">Class Teacher's Final Remarks</span>
+                            <p className="font-semibold text-slate-800 leading-relaxed italic text-[10.5px]">
                               &ldquo;{std.remarksTeacher || "Satisfactory progress shown throughout the interval. Recommended to strive further next session."}&rdquo;
                             </p>
                           </div>
                           
-                          <div className="space-y-1 bg-slate-50 p-2.5 rounded border border-slate-200">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Headteacher's Comments</span>
-                            <p className="font-semibold text-slate-800 leading-tight italic">
+                          <div className="space-y-1 bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block font-mono">Headteacher's Comments</span>
+                            <p className="font-semibold text-slate-800 leading-relaxed italic text-[10.5px]">
                               &ldquo;{std.remarksHead || "Promising performance. Recommended to strive for higher laurels."}&rdquo;
                             </p>
                           </div>
                         </div>
 
-                        {/* Signatures & Stamps row */}
-                        <div className="grid grid-cols-2 pt-4 border-t border-dashed border-slate-200 text-[9px] text-slate-400 font-bold">
-                          <div className="space-y-6">
-                            <span>Next Term Begins: <strong className="text-slate-800 font-mono">{nextTermDate}</strong></span>
-                            <div className="border-t border-slate-300 w-36 pt-1 text-center font-mono">
-                              Teacher's Signature
+                        {/* Signatures & Stamps Row */}
+                        <div className="grid grid-cols-2 pt-3 border-t border-dashed border-slate-200 text-[9px] text-slate-500 font-bold">
+                          <div className="space-y-5">
+                            <span>Next Term Begins: <strong className="text-slate-900 font-mono">{nextTermDate}</strong></span>
+                            <div className="border-t border-slate-400 w-40 pt-1 text-center font-mono text-[9px] text-slate-600 uppercase">
+                              Class Teacher's Signature
                             </div>
                           </div>
-                          <div className="space-y-6 flex flex-col items-end">
-                            <span className="text-right">Issued Date: <strong className="text-slate-800 font-mono">2026-07-18</strong></span>
-                            <div className="border-t border-slate-300 w-36 pt-1 text-center font-mono">
-                              Headmaster stamp / sign
+                          <div className="space-y-5 flex flex-col items-end">
+                            <span className="text-right">Issued Date: <strong className="text-slate-900 font-mono">2026-07-18</strong></span>
+                            <div className="border-t border-slate-400 w-40 pt-1 text-center font-mono text-[9px] text-slate-600 uppercase">
+                              Headteacher Seal / Signature
                             </div>
                           </div>
                         </div>
 
                       </div>
 
-                      {/* Paper bottom watermark footer */}
-                      <div className="mt-4 flex items-center justify-between text-[8px] text-slate-400 border-t border-slate-100 pt-2 font-mono">
-                        <span>OMR Scan ID: {std.id}</span>
-                        <span className="font-bold">Powered by MarkSwift Engine</span>
+                      {/* Paper Bottom Watermark Footer */}
+                      <div className="mt-3 flex items-center justify-between text-[8px] text-slate-400 border-t border-slate-100 pt-2 font-mono">
+                        <span>OMR Report ID: {std.id}</span>
+                        <span className="font-extrabold text-emerald-800 dark:text-emerald-400">Powered by TEACHER'S TOOLKit Engine</span>
                       </div>
                     </div>
                   );

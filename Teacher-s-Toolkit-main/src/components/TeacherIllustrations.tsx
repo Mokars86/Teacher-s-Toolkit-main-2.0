@@ -178,27 +178,99 @@ export const ShrugIllustration: React.FC<IllustrationProps> = ({ className = "w-
   );
 };
 
-export const TeacherAvatar: React.FC<IllustrationProps> = ({ className = "w-10 h-10" }) => {
+export interface TeacherAvatarProps {
+  className?: string;
+  src?: string;
+  gender?: 'female' | 'male' | 'headteacher';
+  showBadge?: boolean;
+}
+
+export const TeacherAvatar: React.FC<TeacherAvatarProps> = ({ 
+  className = "w-10 h-10", 
+  src, 
+  gender = 'female',
+  showBadge = true
+}) => {
+  if (src) {
+    return (
+      <div className={`relative overflow-hidden border-2 border-emerald-500/80 shadow-md ${className}`}>
+        <img src={src} alt="Teacher Profile Avatar" className="w-full h-full object-cover" />
+      </div>
+    );
+  }
+
   return (
-    <div className={`rounded-full overflow-hidden border border-emerald-300 bg-emerald-50 flex items-center justify-center ${className}`}>
-      <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full scale-110">
+    <div className={`relative overflow-hidden border-2 border-emerald-500/80 shadow-md bg-gradient-to-br from-emerald-500 via-teal-600 to-indigo-700 flex items-center justify-center shrink-0 ${className}`}>
+      <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full scale-110">
+        <defs>
+          <linearGradient id="avatarShirt" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#10b981" />
+            <stop offset="100%" stopColor="#047857" />
+          </linearGradient>
+          <linearGradient id="avatarHair" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#1e293b" />
+            <stop offset="100%" stopColor="#0f172a" />
+          </linearGradient>
+          <linearGradient id="glassGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.7)" />
+            <stop offset="100%" stopColor="rgba(255,255,255,0.25)" />
+          </linearGradient>
+          <filter id="avatarShadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="2" floodOpacity="0.25" />
+          </filter>
+        </defs>
+
+        {/* Ambient inner circle glow */}
+        <circle cx="60" cy="60" r="58" fill="url(#avatarShirt)" opacity="0.15" />
+
+        {/* Shoulder / Shirt */}
+        <path d="M22 105 C25 85 40 76 60 76 C80 76 95 85 98 105 Z" fill="url(#avatarShirt)" filter="url(#avatarShadow)" />
+        <path d="M48 76 L60 92 L72 76 Z" fill="#ffffff" opacity="0.95" />
+        {/* Teacher Tie / Collar Accent */}
+        <path d="M56 84 L60 98 L64 84 Z" fill="#f59e0b" />
+
         {/* Neck */}
-        <rect x="44" y="65" width="12" height="15" fill="#f8fafc" stroke="#1e293b" strokeWidth="2" />
-        {/* Collar */}
-        <path d="M35 80 L50 85 L65 80 L50 95 Z" fill="#10b981" />
+        <rect x="52" y="62" width="16" height="18" rx="4" fill="#fcd34d" />
+
         {/* Head */}
-        <circle cx="50" cy="45" r="22" fill="white" stroke="#1e293b" strokeWidth="3" />
-        {/* Glasses */}
-        <rect x="34" y="38" width="13" height="10" rx="2" stroke="#1e293b" strokeWidth="2.5" fill="white" />
-        <rect x="53" y="38" width="13" height="10" rx="2" stroke="#1e293b" strokeWidth="2.5" fill="white" />
-        <line x1="47" y1="43" x2="53" y2="43" stroke="#1e293b" strokeWidth="2" />
+        <circle cx="60" cy="46" r="24" fill="#fcd34d" filter="url(#avatarShadow)" />
+
+        {/* Hair Styles */}
+        {gender === 'female' ? (
+          <g>
+            <path d="M32 44 C28 20 45 15 60 15 C75 15 92 20 88 44 C88 56 82 62 82 62 C78 48 74 30 60 30 C46 30 42 48 38 62 C38 62 32 56 32 44 Z" fill="url(#avatarHair)" />
+            <circle cx="60" cy="14" r="8" fill="url(#avatarHair)" />
+          </g>
+        ) : (
+          <path d="M34 40 C34 22 45 18 60 18 C75 18 86 22 86 40 C84 32 76 26 60 26 C44 26 36 32 34 40 Z" fill="url(#avatarHair)" />
+        )}
+
+        {/* Eyeglasses */}
+        <g filter="url(#avatarShadow)">
+          <rect x="40" y="40" width="16" height="12" rx="3" stroke="#0f172a" strokeWidth="2.5" fill="url(#glassGrad)" />
+          <rect x="64" y="40" width="16" height="12" rx="3" stroke="#0f172a" strokeWidth="2.5" fill="url(#glassGrad)" />
+          <line x1="56" y1="46" x2="64" y2="46" stroke="#0f172a" strokeWidth="2.5" />
+          <line x1="34" y1="44" x2="40" y2="44" stroke="#0f172a" strokeWidth="2" />
+          <line x1="80" y1="44" x2="86" y2="44" stroke="#0f172a" strokeWidth="2" />
+        </g>
+
         {/* Smiling Mouth */}
-        <path d="M44 55 C47 58 53 58 56 55" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" fill="none" />
-        {/* Hair */}
-        <path d="M26 40 C25 24 35 22 50 22 C65 22 75 24 74 40 C74 42 70 42 68 39 C60 38 55 41 50 38 C45 41 40 38 32 39 C30 42 26 42 26 40 Z" fill="#334155" stroke="#1e293b" strokeWidth="1.5" />
-        {/* Blushing cheeks */}
-        <circle cx="32" cy="48" r="3" fill="#fca5a5" opacity="0.5" />
-        <circle cx="68" cy="48" r="3" fill="#fca5a5" opacity="0.5" />
+        <path d="M52 57 C55 61 65 61 68 57" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+
+        {/* Rosy Cheeks */}
+        <circle cx="41" cy="52" r="3.5" fill="#f87171" opacity="0.4" />
+        <circle cx="79" cy="52" r="3.5" fill="#f87171" opacity="0.4" />
+
+        {/* Teacher ID Badge / Lanyard */}
+        {showBadge && (
+          <g filter="url(#avatarShadow)">
+            <path d="M44 88 L52 98 M76 88 L68 98" stroke="#3b6ff5" strokeWidth="2" strokeDasharray="3 2" />
+            <rect x="53" y="96" width="14" height="16" rx="2" fill="#ffffff" stroke="#3b6ff5" strokeWidth="1.5" />
+            <rect x="56" y="99" width="8" height="2" fill="#10b981" />
+            <rect x="56" y="103" width="8" height="2" fill="#cbd5e1" />
+            <circle cx="60" cy="107" r="1.5" fill="#3b6ff5" />
+          </g>
+        )}
       </svg>
     </div>
   );

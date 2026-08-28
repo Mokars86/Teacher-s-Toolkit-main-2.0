@@ -2,9 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { 
   ArrowLeft, Plus, Trash2, Shuffle, Image as ImageIcon, Camera, 
   Printer, Share2, Save, FileText, CheckCircle2, CheckCircle, 
-  HelpCircle, ChevronDown, Sparkles, Copy, X, ArrowRight, Eye, RefreshCw
+  HelpCircle, ChevronDown, Sparkles, Copy, X, ArrowRight, Eye, RefreshCw, BookOpen
 } from 'lucide-react';
 import { ExamPaper, ExamQuestion, AnswerKey, SchoolProfile } from '../types';
+import { QuestionBankImportModal } from './QuestionBankImportModal';
 
 interface ExamBuilderModuleProps {
   onBack: () => void;
@@ -12,6 +13,8 @@ interface ExamBuilderModuleProps {
   selectedClass: string;
   setSelectedClass: (cls: string) => void;
   onSaveMasterKeyAndScan: (key: AnswerKey) => void;
+  userProfile?: any;
+  onTriggerPaywall?: (featureName: string, description: string) => void;
 }
 
 const DEFAULT_SAMPLE_QUESTIONS: ExamQuestion[] = [
@@ -69,6 +72,19 @@ const DEFAULT_SAMPLE_QUESTIONS: ExamQuestion[] = [
   }
 ];
 
+interface SavedExamDraft {
+  id: string;
+  examTitle: string;
+  subject: string;
+  selectedClass: string;
+  timeAllowed: string;
+  totalTargetQuestions: number;
+  instructions: string;
+  examType: "mcq" | "theory";
+  questions: ExamQuestion[];
+  savedAt: string;
+}
+
 export function ExamBuilderModule({
   onBack,
   schoolProfile,
@@ -88,11 +104,88 @@ export function ExamBuilderModule({
   const [questions, setQuestions] = useState<ExamQuestion[]>(DEFAULT_SAMPLE_QUESTIONS);
 
   const [isOutputModalOpen, setIsOutputModalOpen] = useState<boolean>(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [isLoadDraftModalOpen, setIsLoadDraftModalOpen] = useState<boolean>(false);
   const [activeTabPDF, setActiveTabPDF] = useState<"exam" | "omr">("exam");
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [draftNotice, setDraftNotice] = useState<boolean>(false);
 
   const [activeImageQId, setActiveImageQId] = useState<string | null>(null);
   const [tempImageUrl, setTempImageUrl] = useState<string>("");
+
+  const [savedDrafts, setSavedDrafts] = useState<SavedExamDraft[]>(() => {
+    try {
+      const raw = localStorage.getItem("teacher_exam_drafts");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleSaveDraft = () => {
+    try {
+      const newDraft: SavedExamDraft = {
+        id: `draft_${Date.now()}`,
+        examTitle,
+        subject,
+        selectedClass,
+        timeAllowed,
+        totalTargetQuestions,
+        instructions,
+        examType,
+        questions,
+        savedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      };
+
+      const updatedList = [newDraft, ...savedDrafts.filter(d => !(d.examTitle === examTitle && d.subject === subject && d.selectedClass === selectedClass))];
+      setSavedDrafts(updatedList);
+      localStorage.setItem("teacher_exam_drafts", JSON.stringify(updatedList));
+
+      setDraftNotice(true);
+      setTimeout(() => setDraftNotice(false), 2500);
+    } catch (err) {
+      alert("Draft saved!");
+    }
+  };
+
+  const handleLoadSelectedDraft = (draft: SavedExamDraft) => {
+    setExamTitle(draft.examTitle);
+    setSubject(draft.subject);
+    setSelectedClass(draft.selectedClass);
+    setTimeAllowed(draft.timeAllowed);
+    setTotalTargetQuestions(draft.totalTargetQuestions);
+    setInstructions(draft.instructions);
+    setExamType(draft.examType);
+    setQuestions(draft.questions);
+    setIsLoadDraftModalOpen(false);
+    setDraftNotice(true);
+    setTimeout(() => setDraftNotice(false), 2500);
+  };
+
+  const handleDeleteDraft = (id: string) => {
+    const updated = savedDrafts.filter(d => d.id !== id);
+    setSavedDrafts(updated);
+    localStorage.setItem("teacher_exam_drafts", JSON.stringify(updated));
+  };
+
+  const handleGenerateExamPaper = () => {
+    if (!questions || questions.length === 0) {
+      alert("Please add or import at least 1 question to generate the exam paper.");
+      return;
+    }
+    setIsOutputModalOpen(true);
+  };
+
+  const handleImportQuestions = (imported: ExamQuestion[]) => {
+    setQuestions(prev => {
+      const startNum = prev.length + 1;
+      const renumbered = imported.map((q, idx) => ({
+        ...q,
+        questionNumber: startNum + idx
+      }));
+      return [...prev, ...renumbered];
+    });
+  };
 
   const classList = ["JHS 2 Gold", "JHS 1 Emerald", "Primary 6 Ruby", "SHS 1 General Arts"];
   const subjectList = ["Integrated Science", "Mathematics", "English Language", "Social Studies", "RME", "ICT / Computing"];
@@ -213,34 +306,43 @@ export function ExamBuilderModule({
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 flex flex-col pb-32 transition-colors duration-200 animate-fade-in">
-      {/* HEADER BAR */}
-      <header className="sticky top-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3">
-        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+      {/* HEADER BAR (MOBILE & IPHONE SE OPTIMIZED) */}
+      <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 sm:px-4 sm:py-3 shadow-xs">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
+          {/* Back button & Title block */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <button 
               onClick={onBack}
-              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-all active:scale-95 border border-slate-200 dark:border-slate-700"
+              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-all active:scale-95 border border-slate-200 dark:border-slate-700 shrink-0 cursor-pointer"
+              title="Back to Dashboard"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xl">📄</span>
-                <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Exam Question Builder & 2-Column PDF</h1>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base sm:text-lg shrink-0">📄</span>
+                <h1 className="text-xs sm:text-base font-black text-slate-900 dark:text-white tracking-tight truncate">
+                  <span className="sm:hidden">Exam Builder & PDF</span>
+                  <span className="hidden sm:inline">Exam Question Builder & 2-Column PDF</span>
+                </h1>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Mobile MCQ Entry & Paper-Saving Print Engine</p>
+              <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+                MCQ & Paper-Saving Print Engine
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            <div className="bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-500/40 text-indigo-900 dark:text-indigo-200 text-xs font-bold px-3 py-1.5 rounded-xl">
-              {schoolProfile?.name || "St. Peter's Basic"} • {selectedClass}
+          {/* Right side Badges: Class & Question Counter */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-500/40 text-indigo-900 dark:text-indigo-200 text-[10px] sm:text-xs font-extrabold px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl truncate max-w-[95px] sm:max-w-none">
+              {selectedClass}
             </div>
 
-            <div className="bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-1.5 flex items-center gap-2 shadow-inner">
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Questions:</span>
-              <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
-                {questions.length} / {totalTargetQuestions}
+            <div className="bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-500/40 rounded-lg sm:rounded-xl px-2 py-1 sm:px-3 sm:py-1.5 flex items-center gap-1 shadow-xs">
+              <span className="text-[9px] sm:text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase hidden sm:inline">Qs:</span>
+              <span className="text-[10px] sm:text-xs font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                {questions.length}/{totalTargetQuestions}
               </span>
             </div>
           </div>
@@ -251,7 +353,7 @@ export function ExamBuilderModule({
 
         {/* SECTION A: EXAM METADATA */}
         <section className="bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-3xl p-5 sm:p-6 shadow-md dark:shadow-xl space-y-4 card-accent-top">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700/60 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 dark:border-slate-700/60 pb-3 gap-2">
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <span>⚙️ Exam Paper Metadata</span>
@@ -259,6 +361,18 @@ export function ExamBuilderModule({
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">Configure title, duration, marks, and student instructions for output PDF.</p>
             </div>
+
+            {savedDrafts.length > 0 && (
+              <button
+                type="button"
+                id="btn_open_saved_drafts"
+                onClick={() => setIsLoadDraftModalOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-300 font-extrabold text-xs flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/80 transition shadow-xs self-start sm:self-auto cursor-pointer"
+              >
+                <Save className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>📁 Load Saved Drafts ({savedDrafts.length})</span>
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -359,11 +473,19 @@ export function ExamBuilderModule({
 
         {/* SECTION C: QUESTION REPEATER */}
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-2">
               <span>Question Cards List ({questions.length})</span>
             </h2>
-            <span className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold">Single-thumb fast mobile typing active</span>
+            
+            <button
+              type="button"
+              onClick={() => setIsImportModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 font-extrabold text-xs flex items-center gap-1.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 transition shadow-sm"
+            >
+              <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>📚 Import from WAEC Bank</span>
+            </button>
           </div>
 
           {questions.map((q) => (
@@ -487,38 +609,80 @@ export function ExamBuilderModule({
             </div>
           ))}
 
-          <div className="pt-2">
+          <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
               type="button"
               onClick={handleAddQuestion}
-              className="w-full py-4 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 hover:border-indigo-500 text-indigo-700 dark:text-indigo-300 font-extrabold rounded-2xl text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99]"
+              className="py-3.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 hover:border-indigo-500 text-indigo-700 dark:text-indigo-300 font-extrabold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99]"
             >
-              <Plus className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-              <span>+ Add Next Question (Q{questions.length + 1})</span>
+              <Plus className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span>+ Create Manual Question (Q{questions.length + 1})</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setIsImportModalOpen(true)}
+              className="py-3.5 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 font-extrabold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99]"
+            >
+              <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>📚 Import from WAEC Bank</span>
+            </button>
+          </div>
+
+          {/* Action Deck: Save Draft & Generate PDF Directly Below Last Question */}
+          <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 mt-4 space-y-2.5">
+            <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Exam Paper Output Actions</span>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                id="btn_save_draft_inline"
+                onClick={handleSaveDraft}
+                className="py-3.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer active:scale-95"
+              >
+                <Save className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>{draftNotice ? "✓ Draft Saved!" : "💾 Save Exam Draft"}</span>
+              </button>
+
+              <button
+                type="button"
+                id="btn_generate_pdf_inline"
+                onClick={handleGenerateExamPaper}
+                className="sm:col-span-2 py-3.5 px-6 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl shadow-indigo-600/30 transition-all cursor-pointer active:scale-[0.98]"
+              >
+                <FileText className="w-5 h-5" />
+                <span>📄 Generate 2-Column PDF & OMR Key</span>
+              </button>
+            </div>
           </div>
         </section>
       </main>
 
-      {/* FOOTER BAR */}
-      <footer className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 p-4 shadow-2xl">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+      {/* FOOTER BAR (OPTIMIZED FOR IPHONE SE & SMALL MOBILE SCREENS) */}
+      <footer className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 p-2.5 sm:p-4 shadow-2xl">
+        <div className="max-w-5xl mx-auto flex items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => alert("Draft exam paper saved locally!")}
-            className="py-3.5 px-5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all"
+            id="btn_save_exam_draft"
+            onClick={handleSaveDraft}
+            className="shrink-0 py-3 px-3 sm:py-3.5 sm:px-5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl sm:rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-xs"
+            title="Save draft locally"
           >
-            <Save className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>💾 Save Draft</span>
+            <Save className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <span>{draftNotice ? "Saved!" : "Save Draft"}</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setIsOutputModalOpen(true)}
-            className="flex-1 py-3.5 px-6 btn-primary rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2 shadow-xl shadow-indigo-600/30"
+            id="btn_generate_exam_paper"
+            onClick={handleGenerateExamPaper}
+            className="flex-1 py-3 px-3.5 sm:py-3.5 sm:px-6 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-xl sm:rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-xl shadow-indigo-600/30 transition-all cursor-pointer active:scale-[0.98]"
           >
-            <FileText className="w-5 h-5" />
-            <span>📄 Generate 2-Column PDF & OMR Key</span>
+            <FileText className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+            <span className="truncate">Generate 2-Column PDF & Key</span>
           </button>
         </div>
       </footer>
@@ -601,40 +765,40 @@ export function ExamBuilderModule({
             <div className="bg-slate-100 dark:bg-slate-950 p-1 rounded-xl grid grid-cols-2 gap-1 text-xs font-bold">
               <button
                 onClick={() => setActiveTabPDF("exam")}
-                className={`py-2 rounded-lg transition-all ${
-                  activeTabPDF === 'exam' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
+                className={`py-2 px-1 text-[11px] sm:text-xs rounded-lg transition-all flex items-center justify-center gap-1 ${
+                  activeTabPDF === 'exam' ? 'bg-indigo-600 text-white shadow-sm font-extrabold' : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                📄 2-Column Question Paper PDF
+                <span>📄 Question Paper PDF</span>
               </button>
               <button
                 onClick={() => setActiveTabPDF("omr")}
-                className={`py-2 rounded-lg transition-all ${
-                  activeTabPDF === 'omr' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
+                className={`py-2 px-1 text-[11px] sm:text-xs rounded-lg transition-all flex items-center justify-center gap-1 ${
+                  activeTabPDF === 'omr' ? 'bg-indigo-600 text-white shadow-sm font-extrabold' : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                📝 Matching OMR Answer Sheet
+                <span>📝 OMR Answer Sheet</span>
               </button>
             </div>
 
             {activeTabPDF === "exam" ? (
-              <div id="printable-exam-paper" className="bg-white text-slate-900 p-6 rounded-2xl shadow-inner space-y-4 max-h-[50vh] overflow-y-auto font-sans text-xs">
+              <div id="printable-exam-paper" className="bg-white text-slate-900 p-4 sm:p-6 rounded-2xl shadow-inner space-y-4 max-h-[45vh] sm:max-h-[50vh] overflow-y-auto font-sans text-xs">
                 <div className="text-center border-b-2 border-slate-900 pb-3 space-y-1">
-                  <h2 className="text-base font-extrabold uppercase tracking-tight">{schoolProfile?.name || "ST. PETER'S BASIC SCHOOL"}</h2>
+                  <h2 className="text-sm sm:text-base font-extrabold uppercase tracking-tight">{schoolProfile?.name || "ST. PETER'S BASIC SCHOOL"}</h2>
                   <p className="text-[10px] text-slate-600 font-medium">{schoolProfile?.address || "P.O. Box 42, Osu, Accra - Ghana"}</p>
                   <div className="text-xs font-bold text-indigo-900 uppercase pt-1">{examTitle} — {subject}</div>
-                  <div className="flex justify-between text-[11px] font-semibold text-slate-700 pt-2 px-2 border-t border-slate-200">
+                  <div className="flex justify-between text-[10px] sm:text-[11px] font-semibold text-slate-700 pt-2 px-2 border-t border-slate-200">
                     <span>CLASS: {selectedClass}</span>
                     <span>TIME: {timeAllowed}</span>
                     <span>MARKS: {questions.length}</span>
                   </div>
                 </div>
 
-                <div className="bg-slate-100 p-2 rounded text-[11px] italic text-slate-700">
+                <div className="bg-slate-100 p-2 rounded text-[10px] sm:text-[11px] italic text-slate-700">
                   <strong>Instructions:</strong> {instructions}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 text-[11px] leading-snug">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px] leading-snug">
                   {questions.map(q => (
                     <div key={q.id} className="space-y-1 border-b border-slate-100 pb-2 break-inside-avoid">
                       <div className="font-bold text-slate-900">
@@ -654,18 +818,18 @@ export function ExamBuilderModule({
                 </div>
               </div>
             ) : (
-              <div id="printable-omr-paper" className="bg-white text-slate-900 p-6 rounded-2xl shadow-inner space-y-4 max-h-[50vh] overflow-y-auto font-sans text-xs">
+              <div id="printable-omr-paper" className="bg-white text-slate-900 p-4 sm:p-6 rounded-2xl shadow-inner space-y-4 max-h-[45vh] sm:max-h-[50vh] overflow-y-auto font-sans text-xs">
                 <div className="text-center border-b-2 border-slate-900 pb-3">
-                  <h2 className="text-sm font-extrabold uppercase">{schoolProfile?.name || "ST. PETER'S BASIC SCHOOL"}</h2>
+                  <h2 className="text-xs sm:text-sm font-extrabold uppercase">{schoolProfile?.name || "ST. PETER'S BASIC SCHOOL"}</h2>
                   <div className="text-xs font-bold text-indigo-900">OFFICIAL OMR ANSWER BUBBLE SHEET</div>
                   <p className="text-[10px] text-slate-600">{subject} • {selectedClass} • Total Questions: {questions.length}</p>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
                   {questions.map(q => (
-                    <div key={q.id} className="flex items-center justify-between p-1.5 border border-slate-200 rounded font-mono text-[11px]">
+                    <div key={q.id} className="flex items-center justify-between p-1.5 border border-slate-200 rounded font-mono text-[10px] sm:text-[11px]">
                       <span className="font-bold">{q.questionNumber}.</span>
-                      <div className="flex gap-1.5">
+                      <div className="flex gap-1 sm:gap-1.5">
                         {(["A", "B", "C", "D"] as const).map(opt => (
                           <span key={opt} className={`w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold ${
                             q.correctOption === opt ? 'border-emerald-600 text-emerald-700 bg-emerald-50 font-black' : 'border-slate-400 text-slate-500'
@@ -714,6 +878,89 @@ export function ExamBuilderModule({
           </div>
         </div>
       )}
+
+      {/* LOAD SAVED DRAFTS MODAL */}
+      {isLoadDraftModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl relative text-slate-900 dark:text-white">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Save className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold">Saved Exam Paper Drafts</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Click any saved draft to restore questions & metadata.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLoadDraftModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {savedDrafts.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 text-xs font-semibold">
+                  No saved exam drafts found on this device.
+                </div>
+              ) : (
+                savedDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/80 space-y-2.5 hover:border-indigo-400 transition"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-black text-slate-900 dark:text-white">{draft.examTitle}</h4>
+                        <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">
+                          {draft.subject} • {draft.selectedClass}
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400 shrink-0">{draft.savedAt}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                        {draft.questions?.length || 0} Questions Saved
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDraft(draft.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition cursor-pointer"
+                          title="Delete Draft"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleLoadSelectedDraft(draft)}
+                          className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                        >
+                          Load Draft
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUESTION BANK IMPORT MODAL */}
+      <QuestionBankImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImportQuestions={handleImportQuestions}
+      />
     </div>
   );
 }

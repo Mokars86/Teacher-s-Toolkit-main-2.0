@@ -2,16 +2,27 @@ import React, { useState } from 'react';
 import { 
   Building2, Users, CheckCircle2, AlertCircle, Clock, FileText, 
   Search, Check, X, ShieldCheck, Lock, RotateCcw, Edit3, MessageSquare, 
-  ArrowLeft, ArrowRight, Printer, Sparkles, UserCheck, Plus, Sliders, QrCode, Share2
+  ArrowLeft, ArrowRight, Printer, Sparkles, UserCheck, Plus, Sliders, QrCode, Share2,
+  Upload, Image as ImageIcon, Save, LogOut, Ticket, Copy, CreditCard, Moon, Sun,
+  Utensils, DollarSign, Receipt
 } from 'lucide-react';
 import { 
-  SchoolProfile, ClassSubmission, SubmissionStatus, TeacherJoinRequest, PresetRemark, GradedResult 
+  SchoolProfile, ClassSubmission, SubmissionStatus, TeacherJoinRequest, PresetRemark, GradedResult, UserProfile 
 } from '../types';
+import { LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode } from '../services/subscriptionService';
 
 interface HeadteacherPanelProps {
   onBack: () => void;
   resultsList?: GradedResult[];
   schoolProfile?: SchoolProfile | null;
+  onUpdateSchoolProfile?: (updated: SchoolProfile) => void;
+  onLogout?: () => void;
+  vouchersList?: LicenseVoucher[];
+  onAddVoucher?: (voucher: LicenseVoucher) => void;
+  userProfile?: UserProfile;
+  onOpenSubscriptionModal?: () => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }
 
 // Initial mock dataset for school admin
@@ -159,16 +170,107 @@ const INITIAL_PRESET_REMARKS: PresetRemark[] = [
   }
 ];
 
+interface TeacherCollectionSubmission {
+  id: string;
+  teacherName: string;
+  className: string;
+  canteenAmount: number;
+  ptaAmount: number;
+  schoolFeesAmount: number;
+  submittedAt: string;
+  status: "pending" | "verified";
+  receiptRef: string;
+}
+
+const INITIAL_TEACHER_COLLECTIONS: TeacherCollectionSubmission[] = [
+  {
+    id: "col_jhs2",
+    teacherName: "Mr. John Teacher",
+    className: "JHS 2 Gold",
+    canteenAmount: 140,
+    ptaAmount: 450,
+    schoolFeesAmount: 3800,
+    submittedAt: "Today at 08:45 AM",
+    status: "pending",
+    receiptRef: "REC-2026-081"
+  },
+  {
+    id: "col_p5",
+    teacherName: "Mrs. Sarah Appiah",
+    className: "Primary 5 Emerald",
+    canteenAmount: 160,
+    ptaAmount: 600,
+    schoolFeesAmount: 4500,
+    submittedAt: "Yesterday at 04:15 PM",
+    status: "verified",
+    receiptRef: "REC-2026-080"
+  },
+  {
+    id: "col_shs1",
+    teacherName: "Mr. Kwame Boateng",
+    className: "SHS 1 General Arts",
+    canteenAmount: 95,
+    ptaAmount: 350,
+    schoolFeesAmount: 2900,
+    submittedAt: "Today at 09:10 AM",
+    status: "pending",
+    receiptRef: "REC-2026-082"
+  },
+  {
+    id: "col_jhs3",
+    teacherName: "Ms. Patricia Osei",
+    className: "JHS 3 Blue",
+    canteenAmount: 110,
+    ptaAmount: 550,
+    schoolFeesAmount: 4800,
+    submittedAt: "2026-07-21 at 03:30 PM",
+    status: "verified",
+    receiptRef: "REC-2026-078"
+  }
+];
+
 export function HeadteacherPanel({ 
   onBack, 
   resultsList = [],
-  schoolProfile = null 
+  schoolProfile = null,
+  onUpdateSchoolProfile,
+  onLogout,
+  vouchersList,
+  onAddVoucher,
+  userProfile,
+  onOpenSubscriptionModal,
+  isDarkMode = false,
+  onToggleDarkMode,
 }: HeadteacherPanelProps) {
-  const [activeTab, setActiveTab] = useState<"matrix" | "broadsheet" | "remarks" | "teachers">("matrix");
+  const [activeTab, setActiveTab] = useState<"matrix" | "broadsheet" | "remarks" | "teachers" | "settings">("matrix");
   const [submissions, setSubmissions] = useState<ClassSubmission[]>(INITIAL_SUBMISSIONS);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>("sub_jhs2");
   const [pendingTeachers, setPendingTeachers] = useState<TeacherJoinRequest[]>(INITIAL_PENDING_TEACHERS);
   const [presetRemarks, setPresetRemarks] = useState<PresetRemark[]>(INITIAL_PRESET_REMARKS);
+  const [teacherCollections, setTeacherCollections] = useState<TeacherCollectionSubmission[]>(INITIAL_TEACHER_COLLECTIONS);
+
+  const totalCanteenToday = teacherCollections.reduce((sum, c) => sum + c.canteenAmount, 0);
+  const totalPtaTerm = teacherCollections.reduce((sum, c) => sum + c.ptaAmount, 0);
+  const totalFeesTerm = teacherCollections.reduce((sum, c) => sum + c.schoolFeesAmount, 0);
+
+  const handleVerifyCollection = (id: string) => {
+    setTeacherCollections(prev => prev.map(c => c.id === id ? { ...c, status: "verified" } : c));
+  };
+
+  // Editable School Profile Settings State
+  const [currentSchool, setCurrentSchool] = useState<SchoolProfile>(() => {
+    return schoolProfile || INITIAL_SCHOOL_PROFILE;
+  });
+
+  const [localVouchers, setLocalVouchers] = useState<LicenseVoucher[]>(() => {
+    return vouchersList || PRESET_WORKSHOP_VOUCHERS;
+  });
+  const [newVoucherType, setNewVoucherType] = useState<'WORKSHOP' | 'PRO' | 'SCHOOL'>('WORKSHOP');
+  const [newVoucherDesc, setNewVoucherDesc] = useState('Teacher Workshop 30-Day VIP Pass');
+
+  const [printCrestOnPdf, setPrintCrestOnPdf] = useState(true);
+  const [autoSignatureOnReports, setAutoSignatureOnReports] = useState(true);
+  const [saveNotice, setSaveNotice] = useState(false);
   
   // Revision modal state
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
@@ -221,6 +323,35 @@ export function HeadteacherPanel({
     setPendingTeachers(prev => prev.map(t => t.id === id ? { ...t, status: action } : t));
   };
 
+  const handleSaveSettings = () => {
+    if (onUpdateSchoolProfile) {
+      onUpdateSchoolProfile(currentSchool);
+    }
+    setSaveNotice(true);
+    setTimeout(() => setSaveNotice(false), 3000);
+  };
+
+  const handleGenerateVoucher = () => {
+    const code = generateVoucherCode(newVoucherType);
+    let planType: LicenseVoucher['planType'] = 'Workshop VIP Pass';
+    if (newVoucherType === 'PRO') planType = 'Teacher Pro';
+    if (newVoucherType === 'SCHOOL') planType = 'School License';
+
+    const newV: LicenseVoucher = {
+      code,
+      planType,
+      description: newVoucherDesc || `${planType} Voucher`,
+      createdAt: new Date().toISOString().split('T')[0],
+      isUsed: false,
+      durationDays: newVoucherType === 'WORKSHOP' ? 30 : newVoucherType === 'PRO' ? 365 : 120,
+      smsBonus: newVoucherType === 'WORKSHOP' ? 200 : newVoucherType === 'PRO' ? 500 : 1000,
+    };
+
+    setLocalVouchers((prev) => [newV, ...prev]);
+    if (onAddVoucher) onAddVoucher(newV);
+    alert(`Generated New Voucher Code: ${code}`);
+  };
+
   const getStatusBadge = (status: SubmissionStatus) => {
     switch (status) {
       case "approved":
@@ -261,248 +392,566 @@ export function HeadteacherPanel({
   };
 
   return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen text-slate-800 dark:text-slate-100 pb-16">
+    <div className="flex flex-col md:flex-row min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       
-      {/* Upper Navigation Bar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button 
-              id="btn_back_headteacher_panel"
-              onClick={onBack}
-              className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-350"
-              title="Return to teacher command center"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black">
+      {/* ── COMPACT MOBILE TOP HEADER (MOBILE ONLY, HIDDEN ON DESKTOP) ── */}
+      <header className="md:hidden flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <button 
+            id="btn_mob_back_headteacher"
+            onClick={onBack}
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300 shrink-0"
+            title="Return to teacher command center"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-black shrink-0">
+              {currentSchool.logoUrl ? (
+                <img src={currentSchool.logoUrl} alt="Crest" className="w-8 h-8 rounded-lg object-cover" />
+              ) : (
                 <Building2 className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h1 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">
-                    {INITIAL_SCHOOL_PROFILE.name}
-                  </h1>
-                  <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.2 rounded border border-emerald-200">
-                    ADMIN
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 font-mono">
-                  {INITIAL_SCHOOL_PROFILE.headteacherName} • {INITIAL_SCHOOL_PROFILE.academicTerm}
-                </p>
-              </div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xs font-black tracking-tight text-slate-900 dark:text-white truncate">
+                {currentSchool.name}
+              </h1>
+              <span className="text-[9px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest block">
+                Headteacher Portal
+              </span>
             </div>
           </div>
-          
-          <div className="flex items-center gap-2">
+        </div>
+
+        <button
+          onClick={() => setShowSchoolCodeModal(true)}
+          className="px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 rounded-xl text-[10px] font-mono font-extrabold shrink-0"
+        >
+          {currentSchool.code}
+        </button>
+      </header>
+
+      {/* ── DESKTOP LEFT SIDEBAR NAVIGATION (DESKTOP ONLY, HIDDEN ON MOBILE) ── */}
+      <aside className="hidden md:flex md:w-64 lg:w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shrink-0 flex-col justify-between shadow-sm sticky top-0 md:h-screen z-20">
+        
+        <div>
+          {/* Header Branding */}
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="flex items-center gap-3">
+              <button 
+                id="btn_back_headteacher_panel"
+                onClick={onBack}
+                className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300"
+                title="Return to teacher command center"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-sm shrink-0">
+                  {currentSchool.logoUrl ? (
+                    <img src={currentSchool.logoUrl} alt="Crest" className="w-9 h-9 rounded-xl object-cover" />
+                  ) : (
+                    <Building2 className="w-5 h-5" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-xs font-black tracking-tight text-slate-900 dark:text-white truncate">
+                    {currentSchool.name}
+                  </h1>
+                  <span className="text-[9px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest block">
+                    Headteacher Portal
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* School Code Quick Button */}
             <button
               id="btn_school_qr_code"
               onClick={() => setShowSchoolCodeModal(true)}
-              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+              className="w-full py-2 px-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between transition group"
             >
-              <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="hidden sm:inline">School Link Code</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <QrCode className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-mono text-[11px] truncate">{currentSchool.code}</span>
+              </div>
+              <Share2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition shrink-0" />
             </button>
+          </div>
 
-            <button
-              id="btn_print_broadsheet"
-              onClick={() => window.print()}
-              className="px-3.5 py-1.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print Broadsheet</span>
-            </button>
+          {/* Sidebar Navigation Links */}
+          <div className="p-3 space-y-5">
+            {/* Section 1: Academic Oversight */}
+            <div className="space-y-1">
+              <div className="px-3 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                ACADEMIC OVERSIGHT
+              </div>
+
+              <button
+                id="tab_head_matrix"
+                onClick={() => setActiveTab("matrix")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs transition ${
+                  activeTab === "matrix"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Building2 className="w-4 h-4 shrink-0" />
+                <span>Submission Matrix</span>
+              </button>
+
+              <button
+                id="tab_head_broadsheet"
+                onClick={() => setActiveTab("broadsheet")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs transition ${
+                  activeTab === "broadsheet"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <FileText className="w-4 h-4 shrink-0" />
+                <span>Class Broadsheet</span>
+              </button>
+            </div>
+
+            {/* Section 2: School Administration */}
+            <div className="space-y-1">
+              <div className="px-3 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                ADMINISTRATION
+              </div>
+
+              <button
+                id="tab_head_teachers"
+                onClick={() => setActiveTab("teachers")}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-xs transition ${
+                  activeTab === "teachers"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Users className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Staff Directory</span>
+                </div>
+                {pendingTeachers.filter(t => t.status === "pending").length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold shrink-0">
+                    {pendingTeachers.filter(t => t.status === "pending").length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                id="tab_head_remarks"
+                onClick={() => setActiveTab("remarks")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs transition ${
+                  activeTab === "remarks"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span>Preset Remarks</span>
+              </button>
+            </div>
+
+            {/* Section 3: Identity & School Settings */}
+            <div className="space-y-1">
+              <div className="px-3 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                SETTINGS & LOGO
+              </div>
+
+              <button
+                id="tab_head_settings"
+                onClick={() => setActiveTab("settings")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs transition ${
+                  activeTab === "settings"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Sliders className="w-4 h-4 shrink-0" />
+                <span>School & Logo Settings</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Section Navigation Tabs */}
-        <div className="max-w-6xl mx-auto px-4 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800 overflow-x-auto">
+        {/* Print Broadsheet & Logout in Sidebar Footer */}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
           <button
-            id="tab_head_matrix"
-            onClick={() => setActiveTab("matrix")}
-            className={`py-3 px-4 text-xs font-extrabold uppercase border-b-2 transition flex items-center gap-2 shrink-0 ${
-              activeTab === "matrix"
-                ? "border-emerald-600 text-emerald-600 dark:text-emerald-400"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
+            id="btn_print_broadsheet"
+            onClick={() => window.print()}
+            className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
           >
-            <Building2 className="w-4 h-4" />
-            <span>Class Submission Matrix</span>
+            <Printer className="w-4 h-4" />
+            <span>Print Broadsheet</span>
           </button>
 
           <button
-            id="tab_head_broadsheet"
-            onClick={() => setActiveTab("broadsheet")}
-            className={`py-3 px-4 text-xs font-extrabold uppercase border-b-2 transition flex items-center gap-2 shrink-0 ${
-              activeTab === "broadsheet"
-                ? "border-emerald-600 text-emerald-600 dark:text-emerald-400"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
+            type="button"
+            id="btn_head_logout_sidebar"
+            onClick={() => {
+              if (onLogout) onLogout();
+              else onBack();
+            }}
+            className="w-full py-2 px-3 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-rose-200 dark:border-rose-900"
           >
-            <FileText className="w-4 h-4" />
-            <span>Class Review & Broadsheet</span>
+            <LogOut className="w-4 h-4" />
+            <span>Logout Session</span>
           </button>
-
-          <button
-            id="tab_head_remarks"
-            onClick={() => setActiveTab("remarks")}
-            className={`py-3 px-4 text-xs font-extrabold uppercase border-b-2 transition flex items-center gap-2 shrink-0 ${
-              activeTab === "remarks"
-                ? "border-emerald-600 text-emerald-600 dark:text-emerald-400"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Preset Remarks Manager</span>
-          </button>
-
-          <button
-            id="tab_head_teachers"
-            onClick={() => setActiveTab("teachers")}
-            className={`py-3 px-4 text-xs font-extrabold uppercase border-b-2 transition flex items-center gap-2 shrink-0 relative ${
-              activeTab === "teachers"
-                ? "border-emerald-600 text-emerald-600 dark:text-emerald-400"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Staff Directory & Access</span>
-            {pendingTeachers.filter(t => t.status === "pending").length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-            )}
-          </button>
+          
+          <div className="flex items-center gap-1.5 text-slate-400 text-[10px] justify-center pt-1 font-mono">
+            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+            <span>Admin Portal Connected</span>
+          </div>
         </div>
-      </div>
+      </aside>
 
-      <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
-
+      {/* ── MAIN CONTENT WORKSPACE ── */}
+      <main className="flex-1 min-w-0 p-4 sm:p-6 md:p-8 overflow-y-auto pb-24 md:pb-8">
+        
         {/* TAB 1: CLASS SUBMISSION MATRIX */}
         {activeTab === "matrix" && (
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
             
-            {/* Overview Metric Bento Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm space-y-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Total Classes</span>
-                <span className="text-xl font-black font-mono text-slate-900 dark:text-white">6 Classes</span>
-                <span className="text-[9px] text-slate-400 font-bold block">{INITIAL_SCHOOL_PROFILE.totalStudents} Enrolled</span>
+            {/* Overview Metric Bento Cards (Day Mode & Dark Mode Compatible) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+              {/* Card 1: Total Classes */}
+              <div className="bg-gradient-to-br from-emerald-50/80 via-white to-teal-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-sm hover:shadow-md border border-emerald-200/90 dark:border-emerald-500/30 relative overflow-hidden group transition-all duration-300">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-400" />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">Total Classes</span>
+                  <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="mt-2 space-y-0.5">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-slate-900 dark:text-white block">6 Classes</span>
+                  <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold block">{currentSchool.totalStudents} Enrolled Students</span>
+                </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm space-y-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Submissions Pending</span>
-                <span className="text-xl font-black font-mono text-blue-600">
-                  {submissions.filter(s => s.status === "submitted").length} Classes
-                </span>
-                <span className="text-[9px] text-blue-600 font-bold block">Awaiting Head Review</span>
+              {/* Card 2: Submissions Pending */}
+              <div className="bg-gradient-to-br from-blue-50/80 via-white to-indigo-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-sm hover:shadow-md border border-blue-200/90 dark:border-blue-500/30 relative overflow-hidden group transition-all duration-300">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">Submissions Pending</span>
+                  <div className="p-2 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="mt-2 space-y-0.5">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-blue-600 dark:text-blue-400 block">
+                    {submissions.filter(s => s.status === "submitted").length} Classes
+                  </span>
+                  <span className="text-[10px] text-blue-700 dark:text-blue-300 font-bold block">Awaiting Head Verification</span>
+                </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm space-y-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Approved & Locked</span>
-                <span className="text-xl font-black font-mono text-emerald-600">
-                  {submissions.filter(s => s.status === "approved").length} Classes
-                </span>
-                <span className="text-[9px] text-emerald-600 font-bold block">Digital Signature Appended</span>
+              {/* Card 3: Approved & Locked */}
+              <div className="bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-sm hover:shadow-md border border-teal-200/90 dark:border-teal-500/30 relative overflow-hidden group transition-all duration-300">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-emerald-400" />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">Approved & Locked</span>
+                  <div className="p-2 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 group-hover:scale-110 transition-transform">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="mt-2 space-y-0.5">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-teal-600 dark:text-teal-400 block">
+                    {submissions.filter(s => s.status === "approved").length} Classes
+                  </span>
+                  <span className="text-[10px] text-teal-700 dark:text-teal-300 font-bold block">Digitally Signed Reports</span>
+                </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm space-y-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Revisions Requested</span>
-                <span className="text-xl font-black font-mono text-amber-600">
-                  {submissions.filter(s => s.status === "revision_requested").length} Classes
-                </span>
-                <span className="text-[9px] text-amber-600 font-bold block">Notes Sent to Teacher</span>
+              {/* Card 4: Revisions Needed */}
+              <div className="bg-gradient-to-br from-amber-50/80 via-white to-yellow-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-sm hover:shadow-md border border-amber-200/90 dark:border-amber-500/30 relative overflow-hidden group transition-all duration-300">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-yellow-400" />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">Revisions Needed</span>
+                  <div className="p-2 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="mt-2 space-y-0.5">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-amber-600 dark:text-amber-400 block">
+                    {submissions.filter(s => s.status === "revision_requested").length} Classes
+                  </span>
+                  <span className="text-[10px] text-amber-700 dark:text-amber-300 font-bold block">Feedback Notes Sent</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── FINANCIAL COLLECTIONS & TEACHER HAND-OVER TRACKING DECK ── */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-emerald-500" />
+                    <span>Teacher Financial Collections & Revenue Ledger</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Track daily canteen fees, PTA dues & school fee receipts submitted by class teachers.
+                  </p>
+                </div>
+                <span className="chip-emerald hidden sm:inline-flex">Live Cash Audit</span>
+              </div>
+
+              {/* 3 Financial Collection Metric Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                {/* Collection Card 1: Daily Canteen Payments */}
+                <div className="bg-gradient-to-br from-amber-50/90 via-white to-orange-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-xs hover:shadow-md border border-amber-200/90 dark:border-amber-500/30 relative overflow-hidden group transition-all duration-300">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-orange-400" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">Daily Canteen Payments</span>
+                    <div className="p-2 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
+                      <Utensils className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 space-y-0.5">
+                    <span className="text-xl sm:text-2xl font-black font-mono text-amber-700 dark:text-amber-400 block">
+                      GH₵ {totalCanteenToday.toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-amber-800 dark:text-amber-300 font-bold block flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-amber-600" />
+                      <span>Today's Lunch Allowance Hand-Over</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Collection Card 2: PTA Dues & Contributions */}
+                <div className="bg-gradient-to-br from-blue-50/90 via-white to-cyan-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-xs hover:shadow-md border border-blue-200/90 dark:border-blue-500/30 relative overflow-hidden group transition-all duration-300">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-cyan-400" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">PTA Dues & Levies</span>
+                    <div className="p-2 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
+                      <Receipt className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 space-y-0.5">
+                    <span className="text-xl sm:text-2xl font-black font-mono text-blue-700 dark:text-blue-400 block">
+                      GH₵ {totalPtaTerm.toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-blue-800 dark:text-blue-300 font-bold block flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-blue-600" />
+                      <span>Parent-Teacher Association Fund</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Collection Card 3: School Fees Revenue */}
+                <div className="bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 rounded-2xl shadow-xs hover:shadow-md border border-emerald-200/90 dark:border-emerald-500/30 relative overflow-hidden group transition-all duration-300">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-400" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest block">School Fees Revenue</span>
+                    <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
+                      <DollarSign className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 space-y-0.5">
+                    <span className="text-xl sm:text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 block">
+                      GH₵ {totalFeesTerm.toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-emerald-800 dark:text-emerald-300 font-bold block flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      <span>Total Revenue Receipts Verified</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Class Teacher Cash Hand-Over Audit Table */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <Receipt className="w-4 h-4 text-emerald-600" />
+                    <span>Teacher Cash Hand-Over & Collection Verification</span>
+                  </h4>
+                  <span className="text-[10px] font-mono text-slate-400 font-bold">
+                    {teacherCollections.filter(c => c.status === "pending").length} Pending Hand-Overs
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 dark:text-slate-400 text-[10px] font-extrabold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+                        <th className="p-2.5">Class Teacher</th>
+                        <th className="p-2.5">Class</th>
+                        <th className="p-2.5">Canteen</th>
+                        <th className="p-2.5">PTA Dues</th>
+                        <th className="p-2.5">School Fees</th>
+                        <th className="p-2.5">Total Cash</th>
+                        <th className="p-2.5">Receipt Ref</th>
+                        <th className="p-2.5 text-right">Head Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                      {teacherCollections.map((col) => {
+                        const totalCash = col.canteenAmount + col.ptaAmount + col.schoolFeesAmount;
+                        const isVerified = col.status === "verified";
+
+                        return (
+                          <tr key={col.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
+                            <td className="p-2.5 font-bold text-slate-900 dark:text-white">{col.teacherName}</td>
+                            <td className="p-2.5 font-bold text-slate-600 dark:text-slate-300">{col.className}</td>
+                            <td className="p-2.5 font-mono text-amber-700 dark:text-amber-400 font-bold">GH₵ {col.canteenAmount.toFixed(2)}</td>
+                            <td className="p-2.5 font-mono text-blue-700 dark:text-blue-400 font-bold">GH₵ {col.ptaAmount.toFixed(2)}</td>
+                            <td className="p-2.5 font-mono text-emerald-700 dark:text-emerald-400 font-bold">GH₵ {col.schoolFeesAmount.toFixed(2)}</td>
+                            <td className="p-2.5 font-mono text-slate-900 dark:text-white font-black">GH₵ {totalCash.toFixed(2)}</td>
+                            <td className="p-2.5 font-mono text-[10px] text-slate-400">{col.receiptRef}</td>
+                            <td className="p-2.5 text-right">
+                              {isVerified ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold border border-emerald-300 dark:border-emerald-700">
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span>Received & Verified</span>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  id={`btn_verify_col_${col.id}`}
+                                  onClick={() => handleVerifyCollection(col.id)}
+                                  className="px-3 py-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white text-[10px] font-bold rounded-xl shadow-xs transition inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Confirm & Receive Cash</span>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
             {/* Submission Matrix Grid */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-              <div>
-                <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                  Academic Term Class Progress Board
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Click any submitted class to open its broadsheet and perform headteacher verification.
-                </p>
+            <div className="glass-card dark:glass-dark rounded-3xl p-5 sm:p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800/80 pb-3">
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-emerald-500" />
+                    <span>Academic Term Class Progress Board</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Click any submitted class to open its broadsheet and perform headteacher verification & digital locking.
+                  </p>
+                </div>
+                <span className="chip-emerald self-start sm:self-auto">{submissions.length} Active Classes</span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {submissions.map((sub) => (
-                  <div
-                    key={sub.id}
-                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 space-y-3 hover:border-emerald-500 transition duration-150 flex flex-col justify-between"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-900 dark:text-white">{sub.className}</span>
-                        {getStatusBadge(sub.status)}
-                      </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4.5">
+                {submissions.map((sub) => {
+                  const progressPct = Math.round((sub.completedReportsCount / sub.totalStudents) * 100);
+                  const isApproved = sub.status === "approved";
+                  const isSubmitted = sub.status === "submitted";
+                  const isRevision = sub.status === "revision_requested";
 
-                      <div className="text-[11px] text-slate-500 space-y-0.5">
-                        <p><strong className="text-slate-700 dark:text-slate-300">Teacher:</strong> {sub.teacherName}</p>
-                        <p><strong className="text-slate-700 dark:text-slate-300">Progress:</strong> {sub.completedReportsCount} / {sub.totalStudents} Student Reports ({Math.round((sub.completedReportsCount / sub.totalStudents) * 100)}%)</p>
-                        {sub.submittedAt && <p className="text-[10px] text-slate-400 font-mono">Submitted: {sub.submittedAt}</p>}
-                      </div>
+                  return (
+                    <div
+                      key={sub.id}
+                      className="p-4.5 rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white/80 dark:bg-slate-900/80 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-between group relative overflow-hidden card-hover"
+                    >
+                      {/* Status Accent Line */}
+                      <div 
+                        className="absolute top-0 left-0 right-0 h-1" 
+                        style={{
+                          background: isApproved ? 'linear-gradient(90deg,#10b981,#34d399)' :
+                                      isSubmitted ? 'linear-gradient(90deg,#3b6ff5,#60a5fa)' :
+                                      isRevision ? 'linear-gradient(90deg,#f59e0b,#fbbf24)' :
+                                      'linear-gradient(90deg,#94a3b8,#cbd5e1)'
+                        }} 
+                      />
 
-                      {/* Progress Bar */}
-                      <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-emerald-500 transition-all duration-300" 
-                          style={{ width: `${(sub.completedReportsCount / sub.totalStudents) * 100}%` }}
-                        />
-                      </div>
-
-                      {sub.revisionNotes && (
-                        <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg text-[10px] text-amber-800 dark:text-amber-300 space-y-0.5">
-                          <span className="font-bold uppercase tracking-wider block">Headteacher Revision Note:</span>
-                          <p className="line-clamp-2">{sub.revisionNotes}</p>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                          <h4 className="text-sm font-black text-slate-900 dark:text-white tracking-tight">{sub.className}</h4>
+                          {getStatusBadge(sub.status)}
                         </div>
-                      )}
-                    </div>
 
-                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        id={`btn_review_class_${sub.id}`}
-                        onClick={() => {
-                          setSelectedSubmissionId(sub.id);
-                          setActiveTab("broadsheet");
-                        }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 rounded-lg hover:border-emerald-500 transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>View Broadsheet</span>
-                      </button>
-
-                      {sub.status === "submitted" && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            id={`btn_quick_approve_${sub.id}`}
-                            onClick={() => handleApproveClass(sub.id)}
-                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                            title="Approve & Lock Reports"
-                          >
-                            <Lock className="w-3.5 h-3.5" />
-                            <span>Approve</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            id={`btn_quick_revision_${sub.id}`}
-                            onClick={() => handleOpenRevisionModal(sub.id)}
-                            className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                            title="Return for Revision"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
+                        <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1 bg-slate-50/80 dark:bg-slate-950/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <p className="flex justify-between items-center">
+                            <span className="text-slate-400 font-medium">Assigned Teacher:</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{sub.teacherName}</span>
+                          </p>
+                          <p className="flex justify-between items-center">
+                            <span className="text-slate-400 font-medium">Completion:</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{sub.completedReportsCount} / {sub.totalStudents} ({progressPct}%)</span>
+                          </p>
+                          {sub.submittedAt && (
+                            <p className="flex justify-between items-center text-[10px] text-slate-400 font-mono pt-0.5 border-t border-slate-200/50 dark:border-slate-800">
+                              <span>Submitted:</span>
+                              <span>{sub.submittedAt}</span>
+                            </p>
+                          )}
                         </div>
-                      )}
-                    </div>
 
-                  </div>
-                ))}
+                        {/* Animated Progress Bar */}
+                        <div className="space-y-1">
+                          <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-200/60 dark:border-slate-700/60">
+                            <div 
+                              className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-emerald-500 to-teal-400 shadow-xs" 
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {sub.revisionNotes && (
+                          <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-xl text-[10px] text-amber-800 dark:text-amber-300 space-y-0.5">
+                            <span className="font-bold uppercase tracking-wider block text-amber-700 dark:text-amber-400">Headteacher Note:</span>
+                            <p className="line-clamp-2 leading-relaxed">{sub.revisionNotes}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          id={`btn_review_class_${sub.id}`}
+                          onClick={() => {
+                            setSelectedSubmissionId(sub.id);
+                            setActiveTab("broadsheet");
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 rounded-xl hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>View Broadsheet</span>
+                        </button>
+
+                        {sub.status === "submitted" && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              id={`btn_quick_approve_${sub.id}`}
+                              onClick={() => handleApproveClass(sub.id)}
+                              className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1 cursor-pointer"
+                              title="Approve & Lock Reports"
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>Approve</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn_quick_revision_${sub.id}`}
+                              onClick={() => handleOpenRevisionModal(sub.id)}
+                              className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1 cursor-pointer"
+                              title="Return for Revision"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-
             </div>
 
           </div>
@@ -513,10 +962,10 @@ export function HeadteacherPanel({
           <div className="space-y-6">
             
             {/* Header & Verification Controls */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4">
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase">
                     Class Broadsheet: {selectedSubmission.className}
                   </h3>
                   {getStatusBadge(selectedSubmission.status)}
@@ -526,33 +975,33 @@ export function HeadteacherPanel({
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 {selectedSubmission.status !== "approved" ? (
                   <>
                     <button
                       type="button"
                       id="btn_broadsheet_approve"
                       onClick={() => handleApproveClass(selectedSubmission.id)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
+                      className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Lock className="w-3.5 h-3.5" />
-                      <span>Approve & Append Headteacher Stamp</span>
+                      <span>Approve & Append Stamp</span>
                     </button>
 
                     <button
                       type="button"
                       id="btn_broadsheet_revision"
                       onClick={() => handleOpenRevisionModal(selectedSubmission.id)}
-                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
+                      className="w-full sm:w-auto px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>Return with Revision Notes</span>
+                      <span>Return with Notes</span>
                     </button>
                   </>
                 ) : (
-                  <div className="px-3.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-400 text-xs font-bold rounded-xl flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>Locked & Digitally Signed by {INITIAL_SCHOOL_PROFILE.headteacherName}</span>
+                  <div className="px-3.5 py-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-400 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Locked & Digitally Signed by {currentSchool.headteacherName}</span>
                   </div>
                 )}
               </div>
@@ -562,10 +1011,10 @@ export function HeadteacherPanel({
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4 printable-sheet">
               <div className="text-center pb-4 border-b border-slate-200 dark:border-slate-800 space-y-1">
                 <h2 className="text-base font-black uppercase text-slate-900 dark:text-white">
-                  {INITIAL_SCHOOL_PROFILE.name} - OFFICIAL BROADSHEET
+                  {currentSchool.name} - OFFICIAL BROADSHEET
                 </h2>
                 <p className="text-xs font-semibold text-slate-500">
-                  {selectedSubmission.className} • {INITIAL_SCHOOL_PROFILE.academicTerm}
+                  {selectedSubmission.className} • {currentSchool.academicTerm}
                 </p>
               </div>
 
@@ -614,7 +1063,7 @@ export function HeadteacherPanel({
                 <div className="pt-8 mt-6 border-t border-dashed border-slate-200 dark:border-slate-800 flex justify-end">
                   <div className="text-center space-y-1">
                     <div className="border-b-2 border-slate-900 dark:border-white pb-1 font-mono font-black text-xs text-emerald-600">
-                      [DIGITALLY SIGNED: {INITIAL_SCHOOL_PROFILE.headteacherName}]
+                      [DIGITALLY SIGNED: {currentSchool.headteacherName}]
                     </div>
                     <p className="text-[10px] text-slate-400 font-bold uppercase">Headteacher Official Approval Stamp</p>
                   </div>
@@ -781,7 +1230,317 @@ export function HeadteacherPanel({
           </div>
         )}
 
-      </div>
+        {/* TAB 5: SCHOOL & LOGO SETTINGS */}
+        {activeTab === "settings" && (
+          <div className="space-y-4 sm:space-y-6 max-w-4xl animate-fadeIn">
+            {/* Header / Intro Card */}
+            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 text-white rounded-2xl p-4 sm:p-6 shadow-md flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-700/50 border border-emerald-500/30 text-emerald-200 text-[10px] sm:text-xs font-semibold uppercase tracking-wider mb-2">
+                  <Sliders className="w-3.5 h-3.5 text-amber-300 shrink-0" /> <span>Institutional Administration & Branding</span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold">School Identity & Headteacher Authorization</h2>
+                <p className="text-emerald-100 text-xs mt-1 leading-relaxed">
+                  Configure official school logo, crest, headteacher digital signatures, and PDF report branding.
+                </p>
+              </div>
+
+              {saveNotice && (
+                <div className="bg-amber-400 text-slate-950 font-extrabold text-xs px-4 py-2 rounded-xl shadow animate-bounce flex items-center gap-1.5 shrink-0">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Settings Saved!</span>
+                </div>
+              )}
+            </div>
+
+            {/* Form Section 0: Subscription Plan & Dark Mode Settings */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Institutional Subscription Plan Card */}
+              <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-950 text-white border border-slate-700 rounded-2xl p-4 sm:p-6 shadow-md flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                      <CreditCard className="w-4 h-4 shrink-0" />
+                      <span>School Subscription</span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400 text-slate-950 shadow-xs shrink-0">
+                      {userProfile?.activeSubscriptionPlan || 'School License'}
+                    </span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black mt-2">Institutional B2B Plan & Billing</h3>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    Full access to Centralized Collections Hub, Multi-Teacher Score Sync, Textbook & Asset Inventory, and custom school crest branding.
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-slate-700/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                  <div className="text-xs text-slate-400">
+                    Reward Points: <strong className="text-amber-300">{userProfile?.rewardPoints || 0} Pts</strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onOpenSubscriptionModal}
+                    className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Manage Plans & Billing</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Dark Mode Setting Card */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-sm flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <Moon className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span>App Appearance & Theme</span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white mt-2">Dark Mode</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                    Switch interface between light and sleek dark mode for comfortable night-time report approval and low-light environments.
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Theme: <span className="text-indigo-600 dark:text-indigo-400 uppercase font-mono">{isDarkMode ? 'Dark Active' : 'Light Active'}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onToggleDarkMode) onToggleDarkMode();
+                      else {
+                        const isDark = document.documentElement.classList.toggle('dark');
+                        localStorage.setItem('omr_dark_mode', String(isDark));
+                      }
+                    }}
+                    className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 focus:outline-none shrink-0 ${
+                      isDarkMode ? 'bg-indigo-600' : 'bg-slate-200'
+                    }`}
+                    aria-label="Toggle Dark Mode"
+                  >
+                    <div className={`bg-white w-4 h-4 rounded-full shadow transition-transform duration-200 ${
+                      isDarkMode ? 'translate-x-6' : 'translate-x-0'
+                    }`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Form Section 1: School Identity & Logo */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
+                <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>1. School Profile & Crest Logo</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Official School Name
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.name}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    School ID Code (Link Code)
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.code}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, code: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Region / District
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.region}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, region: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Postal Address
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.address}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, address: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    School Motto / Tagline
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.motto}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, motto: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                {/* Logo Upload / URL */}
+                <div className="sm:col-span-2 space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    School Logo Crest Image URL
+                  </label>
+                  <div className="flex items-center gap-2.5 sm:gap-3">
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
+                      {currentSchool.logoUrl ? (
+                        <img src={currentSchool.logoUrl} alt="Crest" className="w-full h-full object-cover" />
+                      ) : (
+                        <Building2 className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Paste Image URL or data URL for official crest logo"
+                      value={currentSchool.logoUrl || ''}
+                      onChange={(e) => setCurrentSchool(prev => ({ ...prev, logoUrl: e.target.value }))}
+                      className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none min-w-0"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Form Section 2: Headteacher Details & Signature */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
+                <UserCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>2. Headteacher Authorization & Digital Signature</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Headteacher Full Name & Title
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.headteacherName}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, headteacherName: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Active Academic Term
+                  </label>
+                  <input
+                    type="text"
+                    value={currentSchool.academicTerm}
+                    onChange={(e) => setCurrentSchool(prev => ({ ...prev, academicTerm: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Digital Headteacher Signature Preview
+                  </label>
+                  <div className="p-3.5 sm:p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+                      <div className="w-full sm:w-44 h-14 border border-dashed border-emerald-400 dark:border-emerald-700 rounded-xl flex items-center justify-center bg-white dark:bg-slate-900 font-serif italic text-base text-emerald-800 dark:text-emerald-300 shadow-inner px-3 shrink-0">
+                        {currentSchool.headteacherName || "Headteacher Signature"}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 block">Digital Verification Active</span>
+                        <span className="text-[10px]">Appears on all approved student terminal reports</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Form Section 3: Branding Toggles & Save Button */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
+                <Printer className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>3. PDF Report & Branding Preferences</span>
+              </div>
+
+              <div className="space-y-3">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={printCrestOnPdf}
+                    onChange={(e) => setPrintCrestOnPdf(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 text-emerald-600 rounded focus:ring-emerald-500 shrink-0"
+                  />
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300 leading-snug">
+                    Display Official School Crest on PDF Terminal Reports & Exam Papers
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoSignatureOnReports}
+                    onChange={(e) => setAutoSignatureOnReports(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 text-emerald-600 rounded focus:ring-emerald-500 shrink-0"
+                  />
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300 leading-snug">
+                    Auto-append Headteacher Digital Signature to Approved Class Broadsheets & Reports
+                  </span>
+                </label>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSaveSettings}
+                  className="w-full sm:w-auto py-3 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Save School & Logo Settings</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Form Section 4: Logout Headteacher Session */}
+            <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 rounded-2xl p-4 sm:p-6 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-rose-800 dark:text-rose-300 font-bold text-sm">
+                <LogOut className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>4. Exit / Logout Headteacher Session</span>
+              </div>
+              <p className="text-xs text-rose-700 dark:text-rose-400">
+                End active administrator session and return to the main sign in screen.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onLogout) onLogout();
+                  else onBack();
+                }}
+                className="w-full sm:w-auto py-2.5 px-5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out Headteacher</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+      </main>
 
       {/* REVISION FEEDBACK MODAL */}
       {isRevisionModalOpen && (
@@ -848,21 +1607,21 @@ export function HeadteacherPanel({
             </div>
 
             <div>
-              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase">{INITIAL_SCHOOL_PROFILE.name}</h3>
+              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase">{currentSchool.name}</h3>
               <p className="text-[11px] text-slate-400 mt-1">Share this unique code or QR with subject teachers to link their workspace</p>
             </div>
 
             <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
               <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-widest block">Official School ID Code</span>
               <span className="text-xl font-black font-mono tracking-widest text-emerald-600 block select-all">
-                {INITIAL_SCHOOL_PROFILE.code}
+                {currentSchool.code}
               </span>
             </div>
 
             <button
               type="button"
               onClick={() => {
-                navigator.clipboard.writeText(INITIAL_SCHOOL_PROFILE.code);
+                navigator.clipboard.writeText(currentSchool.code);
                 alert("School ID Code copied to clipboard!");
               }}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
@@ -873,6 +1632,71 @@ export function HeadteacherPanel({
           </div>
         </div>
       )}
+
+      {/* ── MOBILE BOTTOM NAVIGATION BAR (MATCHING TEACHER NAV STYLE) ── */}
+      <nav className="bottom-nav">
+        <div className="bottom-nav-inner">
+          <button
+            type="button"
+            id="btn_mob_nav_matrix"
+            onClick={() => setActiveTab("matrix")}
+            className={`nav-tab ${activeTab === "matrix" ? 'active' : 'inactive'}`}
+          >
+            {activeTab === "matrix" && <div className="nav-tab-dot" />}
+            <Building2 className="w-5 h-5" />
+            <span>Overview</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn_mob_nav_broadsheet"
+            onClick={() => setActiveTab("broadsheet")}
+            className={`nav-tab ${activeTab === "broadsheet" ? 'active' : 'inactive'}`}
+          >
+            {activeTab === "broadsheet" && <div className="nav-tab-dot" />}
+            <FileText className="w-5 h-5" />
+            <span>Broadsheet</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn_mob_nav_teachers"
+            onClick={() => setActiveTab("teachers")}
+            className={`nav-tab ${activeTab === "teachers" ? 'active' : 'inactive'} relative`}
+          >
+            {activeTab === "teachers" && <div className="nav-tab-dot" />}
+            <Users className="w-5 h-5" />
+            <span>Staff</span>
+            {pendingTeachers.filter(t => t.status === "pending").length > 0 && (
+              <span className="absolute top-1 right-2 w-3.5 h-3.5 rounded-full bg-rose-500 text-white text-[8px] font-bold flex items-center justify-center">
+                {pendingTeachers.filter(t => t.status === "pending").length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            id="btn_mob_nav_remarks"
+            onClick={() => setActiveTab("remarks")}
+            className={`nav-tab ${activeTab === "remarks" ? 'active' : 'inactive'}`}
+          >
+            {activeTab === "remarks" && <div className="nav-tab-dot" />}
+            <Sparkles className="w-5 h-5" />
+            <span>Remarks</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn_mob_nav_settings"
+            onClick={() => setActiveTab("settings")}
+            className={`nav-tab ${activeTab === "settings" ? 'active' : 'inactive'}`}
+          >
+            {activeTab === "settings" && <div className="nav-tab-dot" />}
+            <Sliders className="w-5 h-5" />
+            <span>Settings</span>
+          </button>
+        </div>
+      </nav>
 
     </div>
   );
