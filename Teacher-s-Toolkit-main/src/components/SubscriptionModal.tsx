@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, MobileMoneyProvider, PaymentTransaction } from '../types';
 import { 
-  SUBSCRIPTION_PLANS, PAY_AS_YOU_GO_OPTIONS, isPassActive, 
+  SUBSCRIPTION_PLANS, HEADTEACHER_SCHOOL_PLANS, PAY_AS_YOU_GO_OPTIONS, isPassActive, 
   formatGHS, processMoMoPayment, hasProAccess, hasSchoolLicense,
   LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, validateAndRedeemVoucher,
   REDEEM_POINT_COSTS, redeemPointsForPlan, getReferralLink
@@ -31,7 +31,8 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'plans' | 'points' | 'donate'>('plans');
 
-  
+  const isHeadteacher = userProfile.role === 'headteacher' || (userProfile.referralCode && userProfile.referralCode.startsWith('SCH-REF'));
+
   // Voucher redemption state inside subscription modal
   const [voucherCodeInput, setVoucherCodeInput] = useState('');
   const [voucherFeedback, setVoucherFeedback] = useState<{ success: boolean; message: string } | null>(null);
@@ -45,7 +46,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
     id: string;
     title: string;
     amountGHS: number;
-    planId?: "Free" | "Teacher Pro" | "School License";
+    planId?: string;
     smsAmount?: number;
     passDays?: number;
   } | null>(null);
@@ -58,13 +59,13 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   const [paymentHistory, setPaymentHistory] = useState<PaymentTransaction[]>([
     {
       id: 'tx_init_1',
-      planOrItemTitle: 'Initial Free Tier Welcome',
+      planOrItemTitle: 'Initial School Account Setup',
       amountGHS: 0,
       provider: 'MTN MoMo',
       phoneNumber: '0244123456',
       date: 'Aug 1, 2026',
       status: 'completed',
-      reference: 'GH-MOMO-FREE-INIT',
+      reference: 'GH-MOMO-INIT',
     }
   ]);
 
@@ -155,9 +156,13 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
               <Award className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h2 className="text-lg sm:text-2xl font-bold tracking-tight">Billing & Subscriptions Hub</h2>
+              <h2 className="text-lg sm:text-2xl font-bold tracking-tight">
+                {isHeadteacher ? "Institutional School Subscription Center 🏫" : "Billing & Subscriptions Hub"}
+              </h2>
               <p className="text-emerald-200 text-[11px] sm:text-sm leading-tight">
-                Monetization plans, Seasonal passes, Developer Donations & Workshop Vouchers
+                {isHeadteacher 
+                  ? "Institutional multi-teacher licenses for schools (Monthly, Quarterly/Term, & Annual/Yearly plans)."
+                  : "Monetization plans, Seasonal passes, Developer Donations & Workshop Vouchers"}
               </p>
             </div>
           </div>
@@ -177,9 +182,15 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             </div>
 
             <div className="flex items-center gap-3 sm:gap-4 text-emerald-100">
-              <div>
-                Scans Left: <span className="font-bold text-white">{hasProAccess(userProfile) ? 'Unlimited ∞' : `${Math.max(0, (userProfile.maxFreeScansPerMonth || 50) - (userProfile.scansThisMonth || 0))}/50`}</span>
-              </div>
+              {isHeadteacher ? (
+                <div>
+                  School Status: <span className="font-bold text-emerald-300">Multi-Teacher Broadsheet Sync Active</span>
+                </div>
+              ) : (
+                <div>
+                  Scans Left: <span className="font-bold text-white">{hasProAccess(userProfile) ? 'Unlimited ∞' : `${Math.max(0, (userProfile.maxFreeScansPerMonth || 50) - (userProfile.scansThisMonth || 0))}/50`}</span>
+                </div>
+              )}
               <div>
                 Reward Points: <span className="font-bold text-amber-300">{userProfile.rewardPoints || 0} pts</span>
               </div>
@@ -197,7 +208,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
               }`}
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Subscription Plans & Passes</span>
+              <span>{isHeadteacher ? "School License Packages" : "Subscription Plans & Passes"}</span>
             </button>
 
             <button
@@ -439,193 +450,274 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {/* 1. FREE TIER & PRO PLANS */}
-                {SUBSCRIPTION_PLANS.slice(0, 1).map((plan) => {
-                  const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
-                  return (
-                    <div
-                      key={plan.id}
-                      className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative overflow-hidden"
-                    >
-                      <div className="p-5 sm:p-6 space-y-4">
-                        <div>
-                          <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
-                          <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
-                        </div>
-
-                        <div className="py-2 border-y border-slate-100">
-                          <div className="text-2xl font-black text-slate-800">{plan.priceTag}</div>
-                        </div>
-
-                        <ul className="space-y-2.5 text-xs text-slate-600">
-                          {plan.features.map((feat, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                              <span>{feat}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="p-5 bg-slate-50 border-t border-slate-100">
-                        {isCurrent ? (
-                          <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Current Active Plan</span>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() =>
-                              handleStartCheckout({
-                                type: 'plan',
-                                id: plan.id,
-                                title: plan.name,
-                                amountGHS: plan.monthlyGHS,
-                                planId: plan.id,
-                              })
-                            }
-                            className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <span>Subscribe via MoMo</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* 2. SEASONAL PASS CARD (INTEGRATED FOR EASY ACCESS) */}
-                <div className="bg-white rounded-2xl border-2 border-amber-400 shadow-md hover:shadow-lg transition-all flex flex-col justify-between relative overflow-hidden">
-                  <div className="bg-amber-400 text-slate-950 text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans flex items-center justify-center gap-1">
-                    <Zap className="w-3.5 h-3.5 fill-slate-950" />
-                    <span>Seasonal Exam Pass</span>
-                  </div>
-
-                  <div className="p-4 sm:p-6 space-y-4">
-                    <div>
-                      <h3 className="font-bold text-lg text-slate-900">End-of-Term 2-Wk Pass</h3>
-                      <p className="text-xs text-slate-500 mt-1 min-h-[32px]">14 days of unlimited OMR sheet scanning & PDF report card exports during busy exam crunch weeks.</p>
-                    </div>
-
-                    <div className="py-2 border-y border-slate-100">
-                      <div className="text-2xl font-black text-amber-600">GH₵ 15 <span className="text-xs font-semibold text-slate-400">/ 14 days</span></div>
-                    </div>
-
-                    <ul className="space-y-2.5 text-xs text-slate-600">
-                      <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <span>14 Days Unlimited OMR Scanning</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <span>Full WAEC & Terminal Reports</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <span>No Recurring Commitment</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="p-5 bg-slate-50 border-t border-slate-100">
-                    {activePass ? (
-                      <div className="w-full py-2.5 px-3 bg-amber-100 text-amber-900 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5 border border-amber-300">
-                        <CheckCircle2 className="w-4 h-4 text-amber-600" />
-                        <span>Pass Active Now</span>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() =>
-                          handleStartCheckout({
-                            type: 'pass',
-                            id: 'pass_2week',
-                            title: 'End-of-Term 2-Week Pass',
-                            amountGHS: 15,
-                            passDays: 14,
-                          })
-                        }
-                        className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              {/* HEADTEACHER SCHOOL PLANS GRID (ONLY MONTHLY, TERM, & YEARLY SCHOOL LICENSES) */}
+              {isHeadteacher ? (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                  {HEADTEACHER_SCHOOL_PLANS.map((plan) => {
+                    const isCurrent = userProfile.activeSubscriptionPlan === plan.id || 
+                      (userProfile.activeSubscriptionPlan === 'School License' && plan.popular);
+                    
+                    return (
+                      <div
+                        key={plan.id}
+                        className={`bg-white rounded-2xl border transition-all flex flex-col justify-between relative overflow-hidden ${
+                          plan.popular
+                            ? 'border-2 border-emerald-500 shadow-xl scale-[1.02]'
+                            : 'border-slate-200 shadow-sm hover:shadow-md'
+                        }`}
                       >
-                        <span>Buy Pass via MoMo</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 3. TEACHER PRO & SCHOOL LICENSE */}
-                {SUBSCRIPTION_PLANS.slice(1).map((plan) => {
-                  const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
-                  
-                  return (
-                    <div
-                      key={plan.id}
-                      className={`bg-white rounded-2xl border transition-all flex flex-col justify-between relative overflow-hidden ${
-                        plan.popular
-                          ? 'border-2 border-emerald-500 shadow-xl scale-[1.02]'
-                          : 'border-slate-200 shadow-sm hover:shadow-md'
-                      }`}
-                    >
-                      {plan.popular && (
-                        <div className="bg-emerald-600 text-white text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans">
-                          Most Popular
-                        </div>
-                      )}
-
-                      <div className="p-5 sm:p-6 space-y-4">
-                        <div>
-                          <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
-                          <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
-                        </div>
-
-                        <div className="py-2 border-y border-slate-100">
-                          <div className="text-2xl font-black text-emerald-700">{plan.priceTag}</div>
-                        </div>
-
-                        <ul className="space-y-2.5 text-xs text-slate-600">
-                          {plan.features.map((feat, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                              <span>{feat}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="p-5 bg-slate-50 border-t border-slate-100">
-                        {isCurrent ? (
-                          <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Current Active Plan</span>
+                        {plan.popular && (
+                          <div className="bg-emerald-600 text-white text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans">
+                            Most Popular Term License
                           </div>
-                        ) : (
-                          <button
-                            onClick={() =>
-                              handleStartCheckout({
-                                type: 'plan',
-                                id: plan.id,
-                                title: plan.name,
-                                amountGHS: plan.monthlyGHS,
-                                planId: plan.id,
-                              })
-                            }
-                            className={`w-full py-2.5 px-3 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                              plan.popular
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                : 'bg-slate-900 hover:bg-slate-800 text-white'
-                            }`}
-                          >
-                            <span>Subscribe via MoMo</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
                         )}
+
+                        <div className="p-5 sm:p-6 space-y-4">
+                          <div>
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 mb-1">
+                              <Building2 className="w-4 h-4" />
+                              <span>Institutional Plan</span>
+                            </div>
+                            <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
+                            <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
+                          </div>
+
+                          <div className="py-2 border-y border-slate-100">
+                            <div className="text-2xl font-black text-emerald-700">{plan.priceTag}</div>
+                          </div>
+
+                          <ul className="space-y-2.5 text-xs text-slate-600">
+                            {plan.features.map((feat, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="p-5 bg-slate-50 border-t border-slate-100">
+                          {isCurrent ? (
+                            <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span>Current Active Plan</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleStartCheckout({
+                                  type: 'plan',
+                                  id: plan.id,
+                                  title: plan.name,
+                                  amountGHS: plan.monthlyGHS,
+                                  planId: plan.id,
+                                })
+                              }
+                              className={`w-full py-2.5 px-3 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                plan.popular
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                  : 'bg-slate-900 hover:bg-slate-800 text-white'
+                              }`}
+                            >
+                              <span>Activate School License via MoMo</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                  {/* 1. FREE TIER & PRO PLANS */}
+                  {SUBSCRIPTION_PLANS.slice(0, 1).map((plan) => {
+                    const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
+                    return (
+                      <div
+                        key={plan.id}
+                        className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative overflow-hidden"
+                      >
+                        <div className="p-5 sm:p-6 space-y-4">
+                          <div>
+                            <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
+                            <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
+                          </div>
+
+                          <div className="py-2 border-y border-slate-100">
+                            <div className="text-2xl font-black text-slate-800">{plan.priceTag}</div>
+                          </div>
+
+                          <ul className="space-y-2.5 text-xs text-slate-600">
+                            {plan.features.map((feat, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="p-5 bg-slate-50 border-t border-slate-100">
+                          {isCurrent ? (
+                            <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span>Current Active Plan</span>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                handleStartCheckout({
+                                  type: 'plan',
+                                  id: plan.id,
+                                  title: plan.name,
+                                  amountGHS: plan.monthlyGHS,
+                                  planId: plan.id,
+                                })
+                              }
+                              className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <span>Subscribe via MoMo</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* 2. SEASONAL PASS CARD (INTEGRATED FOR EASY ACCESS) */}
+                  <div className="bg-white rounded-2xl border-2 border-amber-400 shadow-md hover:shadow-lg transition-all flex flex-col justify-between relative overflow-hidden">
+                    <div className="bg-amber-400 text-slate-950 text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans flex items-center justify-center gap-1">
+                      <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                      <span>Seasonal Exam Pass</span>
                     </div>
-                  );
-                })}
-              </div>
+
+                    <div className="p-4 sm:p-6 space-y-4">
+                      <div>
+                        <h3 className="font-bold text-lg text-slate-900">End-of-Term 2-Wk Pass</h3>
+                        <p className="text-xs text-slate-500 mt-1 min-h-[32px]">14 days of unlimited OMR sheet scanning & PDF report card exports during busy exam crunch weeks.</p>
+                      </div>
+
+                      <div className="py-2 border-y border-slate-100">
+                        <div className="text-2xl font-black text-amber-600">GH₵ 15 <span className="text-xs font-semibold text-slate-400">/ 14 days</span></div>
+                      </div>
+
+                      <ul className="space-y-2.5 text-xs text-slate-600">
+                        <li className="flex items-start gap-2">
+                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <span>14 Days Unlimited OMR Scanning</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <span>Full WAEC & Terminal Reports</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <span>No Recurring Commitment</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="p-5 bg-slate-50 border-t border-slate-100">
+                      {activePass ? (
+                        <div className="w-full py-2.5 px-3 bg-amber-100 text-amber-900 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5 border border-amber-300">
+                          <CheckCircle2 className="w-4 h-4 text-amber-600" />
+                          <span>Pass Active Now</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            handleStartCheckout({
+                              type: 'pass',
+                              id: 'pass_2week',
+                              title: 'End-of-Term 2-Week Pass',
+                              amountGHS: 15,
+                              passDays: 14,
+                            })
+                          }
+                          className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span>Buy Pass via MoMo</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3. TEACHER PRO & SCHOOL LICENSE */}
+                  {SUBSCRIPTION_PLANS.slice(1).map((plan) => {
+                    const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
+                    
+                    return (
+                      <div
+                        key={plan.id}
+                        className={`bg-white rounded-2xl border transition-all flex flex-col justify-between relative overflow-hidden ${
+                          plan.popular
+                            ? 'border-2 border-emerald-500 shadow-xl scale-[1.02]'
+                            : 'border-slate-200 shadow-sm hover:shadow-md'
+                        }`}
+                      >
+                        {plan.popular && (
+                          <div className="bg-emerald-600 text-white text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans">
+                            Most Popular
+                          </div>
+                        )}
+
+                        <div className="p-5 sm:p-6 space-y-4">
+                          <div>
+                            <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
+                            <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
+                          </div>
+
+                          <div className="py-2 border-y border-slate-100">
+                            <div className="text-2xl font-black text-emerald-700">{plan.priceTag}</div>
+                          </div>
+
+                          <ul className="space-y-2.5 text-xs text-slate-600">
+                            {plan.features.map((feat, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="p-5 bg-slate-50 border-t border-slate-100">
+                          {isCurrent ? (
+                            <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span>Current Active Plan</span>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                handleStartCheckout({
+                                  type: 'plan',
+                                  id: plan.id,
+                                  title: plan.name,
+                                  amountGHS: plan.monthlyGHS,
+                                  planId: plan.id,
+                                })
+                              }
+                              className={`w-full py-2.5 px-3 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                plan.popular
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                  : 'bg-slate-900 hover:bg-slate-800 text-white'
+                              }`}
+                            >
+                              <span>Subscribe via MoMo</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -653,85 +745,193 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* 2-Week Pass */}
-                <div className="bg-white border-2 border-amber-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
-                  <div>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">14 Days Pass</span>
-                    <h4 className="font-bold text-slate-900 text-base mt-2">End-of-Term Pass</h4>
-                    <div className="text-xl font-black text-amber-700 mt-1">{REDEEM_POINT_COSTS.END_OF_TERM_PASS} Points</div>
-                    <p className="text-xs text-slate-500 mt-2">Unlimited OMR paper scanning during exam crunch week.</p>
+              {/* REEM POINT OPTIONS GRID */}
+              {isHeadteacher ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Weekly School License */}
+                  <div className="bg-white border-2 border-cyan-400 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-3">
+                    <div>
+                      <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 text-[10px] font-bold uppercase">7 Days</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-1.5">Weekly School Plan</h4>
+                      <div className="text-xl font-black text-cyan-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_WEEKLY} Points</div>
+                      <p className="text-xs text-slate-500 mt-1">Short-term broadsheet sync & exam crunch access.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('school_weekly', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_WEEKLY}
+                      className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 150 Pts
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      const res = redeemPointsForPlan('pass', userProfile);
-                      if (res.success && res.updatedProfile) {
-                        onUpdateProfile(res.updatedProfile);
-                        alert(res.message);
-                      } else {
-                        alert(res.message);
-                      }
-                    }}
-                    disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.END_OF_TERM_PASS}
-                    className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
-                  >
-                    Redeem 100 Pts
-                  </button>
-                </div>
 
-                {/* Teacher Pro Month */}
-                <div className="bg-white border-2 border-emerald-500 rounded-2xl p-5 shadow-md hover:shadow-lg transition flex flex-col justify-between space-y-4 relative overflow-hidden">
-                  <div className="bg-emerald-600 text-white text-[9px] font-extrabold uppercase text-center py-0.5 absolute top-0 left-0 right-0 font-sans">
-                    Most Popular
+                  {/* Monthly School License */}
+                  <div className="bg-white border-2 border-indigo-400 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-3">
+                    <div>
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold uppercase">1 Month</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-1.5">Monthly School Plan</h4>
+                      <div className="text-xl font-black text-indigo-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_MONTH} Points</div>
+                      <p className="text-xs text-slate-500 mt-1">Flexible month-to-month institutional license.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('school_monthly', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_MONTH}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 500 Pts
+                    </button>
                   </div>
-                  <div className="pt-2">
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase">30 Days Pro</span>
-                    <h4 className="font-bold text-slate-900 text-base mt-2">Teacher Pro Plan</h4>
-                    <div className="text-xl font-black text-emerald-700 mt-1">{REDEEM_POINT_COSTS.TEACHER_PRO_MONTH} Points</div>
-                    <p className="text-xs text-slate-500 mt-2">Full Pro access, unlimited exports, custom branding & SMS.</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const res = redeemPointsForPlan('pro', userProfile);
-                      if (res.success && res.updatedProfile) {
-                        onUpdateProfile(res.updatedProfile);
-                        alert(res.message);
-                      } else {
-                        alert(res.message);
-                      }
-                    }}
-                    disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.TEACHER_PRO_MONTH}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
-                  >
-                    Redeem 200 Pts
-                  </button>
-                </div>
 
-                {/* School License */}
-                <div className="bg-white border-2 border-indigo-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
-                  <div>
-                    <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold uppercase">1 Term License</span>
-                    <h4 className="font-bold text-slate-900 text-base mt-2">School Admin License</h4>
-                    <div className="text-xl font-black text-indigo-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM} Points</div>
-                    <p className="text-xs text-slate-500 mt-2">Centralized Collections Hub, inventory & multi-staff sync.</p>
+                  {/* Term School License */}
+                  <div className="bg-white border-2 border-emerald-500 rounded-2xl p-4 shadow-md hover:shadow-lg transition flex flex-col justify-between space-y-3 relative overflow-hidden">
+                    <div className="bg-emerald-600 text-white text-[8px] font-extrabold uppercase text-center py-0.5 absolute top-0 left-0 right-0 font-sans">
+                      Most Popular
+                    </div>
+                    <div className="pt-2">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase">1 Term</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-1.5">Quarterly / Term Plan</h4>
+                      <div className="text-xl font-black text-emerald-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM} Points</div>
+                      <p className="text-xs text-slate-500 mt-1">Full academic term broadsheet & collections sync.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('school_term', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 1000 Pts
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      const res = redeemPointsForPlan('school', userProfile);
-                      if (res.success && res.updatedProfile) {
-                        onUpdateProfile(res.updatedProfile);
-                        alert(res.message);
-                      } else {
-                        alert(res.message);
-                      }
-                    }}
-                    disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM}
-                    className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
-                  >
-                    Redeem 1000 Pts
-                  </button>
+
+                  {/* Yearly School License */}
+                  <div className="bg-white border-2 border-amber-400 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-3">
+                    <div>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold uppercase">1 Year</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-1.5">Annual / Yearly Plan</h4>
+                      <div className="text-xl font-black text-amber-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_YEAR} Points</div>
+                      <p className="text-xs text-slate-500 mt-1">Full 12-month unlimited institutional access.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('school_year', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_YEAR}
+                      className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 2000 Pts
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* 2-Week Pass */}
+                  <div className="bg-white border-2 border-amber-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
+                    <div>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">14 Days Pass</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-2">End-of-Term Pass</h4>
+                      <div className="text-xl font-black text-amber-700 mt-1">{REDEEM_POINT_COSTS.END_OF_TERM_PASS} Points</div>
+                      <p className="text-xs text-slate-500 mt-2">Unlimited OMR paper scanning during exam crunch week.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('pass', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.END_OF_TERM_PASS}
+                      className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 100 Pts
+                    </button>
+                  </div>
+
+                  {/* Teacher Pro Month */}
+                  <div className="bg-white border-2 border-emerald-500 rounded-2xl p-5 shadow-md hover:shadow-lg transition flex flex-col justify-between space-y-4 relative overflow-hidden">
+                    <div className="bg-emerald-600 text-white text-[9px] font-extrabold uppercase text-center py-0.5 absolute top-0 left-0 right-0 font-sans">
+                      Most Popular
+                    </div>
+                    <div className="pt-2">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase">30 Days Pro</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-2">Teacher Pro Plan</h4>
+                      <div className="text-xl font-black text-emerald-700 mt-1">{REDEEM_POINT_COSTS.TEACHER_PRO_MONTH} Points</div>
+                      <p className="text-xs text-slate-500 mt-2">Full Pro access, unlimited exports, custom branding & SMS.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('pro', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.TEACHER_PRO_MONTH}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 200 Pts
+                    </button>
+                  </div>
+
+                  {/* School License */}
+                  <div className="bg-white border-2 border-indigo-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
+                    <div>
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold uppercase">1 Term License</span>
+                      <h4 className="font-bold text-slate-900 text-base mt-2">School Admin License</h4>
+                      <div className="text-xl font-black text-indigo-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM} Points</div>
+                      <p className="text-xs text-slate-500 mt-2">Centralized Collections Hub, inventory & multi-staff sync.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const res = redeemPointsForPlan('school', userProfile);
+                        if (res.success && res.updatedProfile) {
+                          onUpdateProfile(res.updatedProfile);
+                          alert(res.message);
+                        } else {
+                          alert(res.message);
+                        }
+                      }}
+                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM}
+                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 1000 Pts
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

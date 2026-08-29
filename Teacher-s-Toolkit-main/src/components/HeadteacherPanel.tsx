@@ -4,12 +4,15 @@ import {
   Search, Check, X, ShieldCheck, Lock, RotateCcw, Edit3, MessageSquare, 
   ArrowLeft, ArrowRight, Printer, Sparkles, UserCheck, Plus, Sliders, QrCode, Share2,
   Upload, Image as ImageIcon, Save, LogOut, Ticket, Copy, CreditCard, Moon, Sun,
-  Utensils, DollarSign, Receipt
+  Utensils, DollarSign, Receipt, Gift, MessageCircle, Award, Zap
 } from 'lucide-react';
 import { 
   SchoolProfile, ClassSubmission, SubmissionStatus, TeacherJoinRequest, PresetRemark, GradedResult, UserProfile 
 } from '../types';
-import { LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode } from '../services/subscriptionService';
+import { 
+  LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode,
+  getReferralLink, REDEEM_POINT_COSTS, REFERRAL_REWARDS, redeemPointsForPlan
+} from '../services/subscriptionService';
 
 interface HeadteacherPanelProps {
   onBack: () => void;
@@ -20,6 +23,7 @@ interface HeadteacherPanelProps {
   vouchersList?: LicenseVoucher[];
   onAddVoucher?: (voucher: LicenseVoucher) => void;
   userProfile?: UserProfile;
+  setUserProfile?: React.Dispatch<React.SetStateAction<UserProfile>>;
   onOpenSubscriptionModal?: () => void;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
@@ -238,6 +242,7 @@ export function HeadteacherPanel({
   vouchersList,
   onAddVoucher,
   userProfile,
+  setUserProfile,
   onOpenSubscriptionModal,
   isDarkMode = false,
   onToggleDarkMode,
@@ -248,6 +253,37 @@ export function HeadteacherPanel({
   const [pendingTeachers, setPendingTeachers] = useState<TeacherJoinRequest[]>(INITIAL_PENDING_TEACHERS);
   const [presetRemarks, setPresetRemarks] = useState<PresetRemark[]>(INITIAL_PRESET_REMARKS);
   const [teacherCollections, setTeacherCollections] = useState<TeacherCollectionSubmission[]>(INITIAL_TEACHER_COLLECTIONS);
+
+  // Headteacher Referral & Points State
+  const [headRedeemFeedback, setHeadRedeemFeedback] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedHeadLink, setCopiedHeadLink] = useState(false);
+
+  const headReferralCode = userProfile?.referralCode || 'SCH-REF-8821';
+  const headReferralLink = getReferralLink(headReferralCode);
+
+  const handleCopyHeadLink = () => {
+    navigator.clipboard.writeText(headReferralLink);
+    setCopiedHeadLink(true);
+    setTimeout(() => setCopiedHeadLink(false), 2500);
+  };
+
+  const handleShareHeadteacherWhatsApp = () => {
+    const text = encodeURIComponent(
+      `Hello Headteacher! 📚 Check out Teacher's Toolkit for multi-teacher broadsheet grading, terminal reports & school fee collections.\n\nSign up with our school referral link to get 20 FREE Bonus Points for your school:\n${headReferralLink}`
+    );
+    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+  };
+
+  const handleHeadteacherRedeem = (type: 'pass' | 'pro' | 'school' | 'school_weekly' | 'school_monthly' | 'school_term' | 'school_year') => {
+    if (!userProfile) return;
+    const res = redeemPointsForPlan(type, userProfile);
+    if (res.success && res.updatedProfile && setUserProfile) {
+      setUserProfile(prev => ({ ...prev, ...res.updatedProfile }));
+      setHeadRedeemFeedback({ success: true, message: res.message });
+    } else {
+      setHeadRedeemFeedback({ success: false, message: res.message });
+    }
+  };
 
   const totalCanteenToday = teacherCollections.reduce((sum, c) => sum + c.canteenAmount, 0);
   const totalPtaTerm = teacherCollections.reduce((sum, c) => sum + c.ptaAmount, 0);
@@ -1251,6 +1287,182 @@ export function HeadteacherPanel({
                   <span>Settings Saved!</span>
                 </div>
               )}
+            </div>
+
+            {/* HEADTEACHER SCHOOL REFERRAL & POINTS REDEMPTION CENTER */}
+            <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-emerald-950 text-white border-2 border-emerald-500/40 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/60 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-md">
+                    <Gift className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2">
+                      <span>Headteacher School Referral Program</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] bg-emerald-500 text-slate-950 font-black uppercase">
+                        +40 PTS / SCHOOL
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-300">
+                      Refer a partner school or Headteacher. You earn <strong>+40 Points</strong> and the second school gets <strong>+20 Bonus Points</strong>!
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/80 p-3 rounded-2xl border border-slate-700 text-center shrink-0">
+                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">School Points Balance</div>
+                  <div className="text-xl font-black text-amber-300">{userProfile?.rewardPoints || 0} Pts</div>
+                </div>
+              </div>
+
+              {headRedeemFeedback && (
+                <div className={`p-3 rounded-xl text-xs font-bold flex items-center justify-between ${
+                  headRedeemFeedback.success ? 'bg-emerald-900/90 text-emerald-100 border border-emerald-500' : 'bg-rose-900/90 text-rose-100 border border-rose-500'
+                }`}>
+                  <span>{headRedeemFeedback.message}</span>
+                  <button type="button" onClick={() => setHeadRedeemFeedback(null)} className="text-white hover:text-slate-300">✕</button>
+                </div>
+              )}
+
+              {/* School Referral Link & Code Box */}
+              <div className="bg-slate-900/90 border border-slate-700 rounded-2xl p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Your School Referral Code</span>
+                    <span className="text-sm font-mono font-black text-amber-300 bg-amber-950/60 border border-amber-600/40 px-3 py-1 rounded-xl inline-block">
+                      {headReferralCode}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyHeadLink}
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-600 transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedHeadLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      <span>{copiedHeadLink ? 'Link Copied!' : 'Copy Link'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleShareHeadteacherWhatsApp}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl shadow transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>Share on WhatsApp (+40 Pts)</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] pt-2 border-t border-slate-800">
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="font-bold text-emerald-400 block mb-0.5">1. Share School Link</span>
+                    <span className="text-slate-400">Send code or link to Headteachers & School Directors.</span>
+                  </div>
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="font-bold text-emerald-400 block mb-0.5">2. Second School Gets +20 Pts</span>
+                    <span className="text-slate-400">Referred school receives 20 Bonus Points immediately upon signup.</span>
+                  </div>
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="font-bold text-amber-300 block mb-0.5">3. You Get +40 Points</span>
+                    <span className="text-slate-400">Your Headteacher account is credited with 40 Points instantly.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct Point Redemption Options for Headteachers - 4 School License Plans */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <Award className="w-4 h-4 text-amber-400" />
+                  <span>Redeem School Points for Institutional Licenses</span>
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Weekly School License */}
+                  <div className="bg-slate-900/90 border border-slate-700 rounded-2xl p-3.5 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-black text-cyan-400">Weekly School Plan</span>
+                        <span className="px-2 py-0.5 bg-cyan-950 text-cyan-300 rounded-full font-mono text-[9px] font-bold">7 Days</span>
+                      </div>
+                      <div className="text-base font-black text-amber-300 mt-1">150 Points</div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Short-term exam crunch & broadsheet evaluation.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleHeadteacherRedeem('school_weekly')}
+                      disabled={(userProfile?.rewardPoints || 0) < 150}
+                      className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 150 Pts
+                    </button>
+                  </div>
+
+                  {/* Monthly School License */}
+                  <div className="bg-slate-900/90 border border-slate-700 rounded-2xl p-3.5 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-black text-indigo-400">Monthly School Plan</span>
+                        <span className="px-2 py-0.5 bg-indigo-950 text-indigo-300 rounded-full font-mono text-[9px] font-bold">1 Month</span>
+                      </div>
+                      <div className="text-base font-black text-amber-300 mt-1">500 Points</div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Flexible month-to-month institutional license.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleHeadteacherRedeem('school_monthly')}
+                      disabled={(userProfile?.rewardPoints || 0) < 500}
+                      className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 500 Pts
+                    </button>
+                  </div>
+
+                  {/* Term School License */}
+                  <div className="bg-slate-900/90 border-2 border-emerald-500/80 rounded-2xl p-3.5 space-y-2 flex flex-col justify-between relative overflow-hidden">
+                    <div className="bg-emerald-600 text-white text-[8px] font-extrabold uppercase text-center py-0.5 absolute top-0 left-0 right-0">
+                      Most Popular Term License
+                    </div>
+                    <div className="pt-1">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-black text-emerald-400">Quarterly / Term Plan</span>
+                        <span className="px-2 py-0.5 bg-emerald-950 text-emerald-300 rounded-full font-mono text-[9px] font-bold">1 Term</span>
+                      </div>
+                      <div className="text-base font-black text-amber-300 mt-1">1000 Points</div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Full term broadsheet & collections sync.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleHeadteacherRedeem('school_term')}
+                      disabled={(userProfile?.rewardPoints || 0) < 1000}
+                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 1000 Pts
+                    </button>
+                  </div>
+
+                  {/* Annual / Yearly School License */}
+                  <div className="bg-slate-900/90 border border-slate-700 rounded-2xl p-3.5 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-black text-amber-400">Annual / Yearly Plan</span>
+                        <span className="px-2 py-0.5 bg-amber-950 text-amber-300 rounded-full font-mono text-[9px] font-bold">1 Year</span>
+                      </div>
+                      <div className="text-base font-black text-amber-300 mt-1">2000 Points</div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Full 12-month unlimited school access.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleHeadteacherRedeem('school_year')}
+                      disabled={(userProfile?.rewardPoints || 0) < 2000}
+                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-extrabold text-xs rounded-xl shadow transition cursor-pointer"
+                    >
+                      Redeem 2000 Pts
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Form Section 0: Subscription Plan & Dark Mode Settings */}

@@ -26,7 +26,11 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
 
   if (!isOpen) return null;
 
-  const referralCode = userProfile.referralCode || 'TEACHER-GH-8921';
+  const isHeadteacher = userProfile.role === 'headteacher' || (userProfile.referralCode && userProfile.referralCode.startsWith('SCH-REF'));
+  const referrerPoints = isHeadteacher ? REFERRAL_REWARDS.HEADTEACHER_REFERRER_POINTS : REFERRAL_REWARDS.REFERRER_POINTS;
+  const bonusPoints = isHeadteacher ? REFERRAL_REWARDS.REFERRED_SCHOOL_BONUS_POINTS : REFERRAL_REWARDS.NEW_USER_BONUS_POINTS;
+
+  const referralCode = userProfile.referralCode || (isHeadteacher ? 'SCH-REF-8921' : 'TEACHER-GH-8921');
   const referralLink = getReferralLink(referralCode);
 
   const handleCopyLink = () => {
@@ -43,7 +47,9 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
 
   const handleShareWhatsApp = () => {
     const text = encodeURIComponent(
-      `Hello Colleague! 📚 Check out Teacher's Toolkit - the best Ghanaian offline-first OMR exam grading & lesson planning app for teachers.\n\nSign up with my link to get 50 FREE Reward Points:\n${referralLink}`
+      isHeadteacher
+        ? `Hello Headteacher! 📚 Check out Teacher's Toolkit for school-wide terminal report approval, OMR grading & fee collections.\n\nSign up with our school referral link to get 20 FREE Bonus Points for your school:\n${referralLink}`
+        : `Hello Colleague! 📚 Check out Teacher's Toolkit - the best Ghanaian offline-first OMR exam grading & lesson planning app for teachers.\n\nSign up with my link to get 10 FREE Reward Points:\n${referralLink}`
     );
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
@@ -76,9 +82,13 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
               <Gift className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl sm:text-2xl font-black tracking-tight">Refer & Earn Subscriptions 🎁</h2>
+              <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+                {isHeadteacher ? "School & Headteacher Referrals 🏫" : "Refer & Earn Subscriptions 🎁"}
+              </h2>
               <p className="text-blue-100 text-xs sm:text-sm">
-                Invite fellow teachers or headteachers & convert points to free Pro plans!
+                {isHeadteacher 
+                  ? "Refer partner schools & Headteachers to earn 40 Points per school!" 
+                  : "Invite fellow teachers & convert points to free Pro plans!"}
               </p>
             </div>
           </div>
@@ -91,11 +101,11 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
             </div>
             <div className="bg-white/10 rounded-xl p-1.5 sm:p-2">
               <div className="text-[9px] sm:text-[10px] text-blue-200 uppercase font-semibold">Referrals Done</div>
-              <div className="text-base sm:text-xl font-extrabold text-white">{userProfile.referralCount || 0} Users</div>
+              <div className="text-base sm:text-xl font-extrabold text-white">{userProfile.referralCount || 0} {isHeadteacher ? "Schools" : "Users"}</div>
             </div>
             <div className="bg-white/10 rounded-xl p-1.5 sm:p-2">
               <div className="text-[9px] sm:text-[10px] text-blue-200 uppercase font-semibold">Points / Refer</div>
-              <div className="text-base sm:text-xl font-extrabold text-emerald-300">+{REFERRAL_REWARDS.REFERRER_POINTS} Pts</div>
+              <div className="text-base sm:text-xl font-extrabold text-emerald-300">+{referrerPoints} Pts</div>
             </div>
           </div>
         </div>
@@ -121,7 +131,7 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
           <div className="bg-white border-2 border-blue-500/30 rounded-2xl p-3.5 sm:p-5 shadow-sm space-y-3.5">
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
               <Share2 className="w-4 h-4 text-blue-600" />
-              <span>Your Personal Referral Link & Code</span>
+              <span>{isHeadteacher ? "Your School Referral Link & Code" : "Your Personal Referral Link & Code"}</span>
             </h3>
 
             {/* Direct Link Input */}
@@ -150,7 +160,7 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
               className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>Share Link directly on WhatsApp (+100 Pts / User)</span>
+              <span>Share Link directly on WhatsApp (+{referrerPoints} Pts / {isHeadteacher ? "School" : "User"})</span>
             </button>
 
             {/* Unique Referral Code */}
@@ -175,18 +185,18 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="p-3 bg-slate-50 rounded-xl space-y-1">
                 <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-extrabold flex items-center justify-center text-xs">1</div>
-                <div className="font-bold text-slate-800">Share Your Link</div>
-                <div className="text-slate-500 text-[11px]">Send your referral link to colleagues, headteachers, or teacher groups.</div>
+                <div className="font-bold text-slate-800">Share Your Code</div>
+                <div className="text-slate-500 text-[11px]">Send link to {isHeadteacher ? "Headteachers or partner schools." : "colleagues or teacher groups."}</div>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl space-y-1">
                 <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-extrabold flex items-center justify-center text-xs">2</div>
-                <div className="font-bold text-slate-800">Colleague Signs Up</div>
-                <div className="text-slate-500 text-[11px]">They automatically get <strong>50 Bonus Points</strong> upon registration.</div>
+                <div className="font-bold text-slate-800">Second {isHeadteacher ? "School" : "Teacher"} Signs Up</div>
+                <div className="text-slate-500 text-[11px]">They automatically get <strong>{bonusPoints} Bonus Points</strong> upon registration.</div>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl space-y-1">
                 <div className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-extrabold flex items-center justify-center text-xs">3</div>
-                <div className="font-bold text-slate-800">Get 100 Reward Pts</div>
-                <div className="text-slate-500 text-[11px]">You instantly get <strong>100 Points</strong> to unlock free Teacher Pro plans!</div>
+                <div className="font-bold text-slate-800">Get {referrerPoints} Reward Pts</div>
+                <div className="text-slate-500 text-[11px]">You instantly get <strong>{referrerPoints} Points</strong> to unlock free {isHeadteacher ? "School Admin licenses!" : "Teacher Pro plans!"}</div>
               </div>
             </div>
           </div>
@@ -273,7 +283,7 @@ export const ReferralHubModal: React.FC<ReferralHubModalProps> = ({
         <div className="bg-slate-100 p-4 shrink-0 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Earn points by contributing papers (+50 Pts) or referring colleagues (+100 Pts)</span>
+            <span>Earn points by contributing papers (+30 Pts) or referring colleagues (+20 Pts)</span>
           </div>
           <button
             onClick={onClose}

@@ -2,6 +2,7 @@ export interface UserProfile {
   email: string;
   fullName: string;
   avatarUrl?: string;
+  role?: string;
   isLoggedIn: boolean;
   isPremium: boolean;
   syncEnabled: boolean;
@@ -10,7 +11,7 @@ export interface UserProfile {
   referralCode: string;
   referralCount: number;
   submittedQuestionsCount: number;
-  activeSubscriptionPlan: "Free" | "Teacher Pro" | "School License";
+  activeSubscriptionPlan: "Free" | "Teacher Pro" | "School License" | "School License Weekly" | "School License Monthly" | "School License Term" | "School License Year";
   scansThisMonth: number;
   maxFreeScansPerMonth: number;
   smsCredits: number;
@@ -33,7 +34,7 @@ export interface PaymentTransaction {
 }
 
 export interface SubscriptionPlanDetails {
-  id: "Free" | "Teacher Pro" | "School License";
+  id: string;
   name: string;
   priceTag: string;
   monthlyGHS: number;

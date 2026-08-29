@@ -651,9 +651,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dark .bottom-nav {
-  background: #041f17;
-  border-color: rgba(52, 211, 153, 0.2);
-  box-shadow: 0 12px 35px -6px rgba(0, 0, 0, 0.5);
+  background: #0f172a;
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: 0 12px 35px -6px rgba(0, 0, 0, 0.6);
 }
 
 .bottom-nav-inner {
@@ -672,7 +672,7 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  padding: 5px 2px;
+  padding: 6px 2px;
   border-radius: 9999px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
@@ -692,19 +692,38 @@ h1, h2, h3, h4, h5, h6 {
   text-align: center;
 }
 
+/* Active Nav Tab State - App Green (#10b981 / #059669) */
 .nav-tab.active {
-  background: #043927;
-  color: #ffffff;
-  box-shadow: 0 4px 12px rgba(4, 57, 39, 0.25);
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
 }
 
 .nav-tab.active svg {
-  color: #34d399;
+  color: #10b981;
+  transform: scale(1.1);
+  transition: transform 0.2s ease, color 0.2s ease;
 }
 
 .nav-tab.active span {
   font-weight: 800;
-  color: #ffffff;
+  color: #059669;
+}
+
+.dark .nav-tab.active {
+  background: rgba(16, 185, 129, 0.22);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+}
+
+.dark .nav-tab.active svg {
+  color: #34d399;
+}
+
+.dark .nav-tab.active span {
+  color: #34d399;
 }
 
 .nav-tab.inactive {
@@ -717,12 +736,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .nav-tab.inactive:hover {
-  color: #043927;
-  background: rgba(4, 57, 39, 0.06);
+  color: #059669;
+  background: rgba(16, 185, 129, 0.08);
 }
 
 .nav-tab.inactive:hover svg {
-  color: #043927;
+  color: #10b981;
   transform: translateY(-1px);
 }
 
@@ -736,7 +755,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .dark .nav-tab.inactive:hover {
   color: #34d399;
-  background: rgba(52, 211, 153, 0.12);
+  background: rgba(52, 211, 153, 0.14);
 }
 
 .dark .nav-tab.inactive:hover svg {
@@ -747,19 +766,19 @@ h1, h2, h3, h4, h5, h6 {
   display: none;
 }
 
-/* NAV center scan FAB */
+/* NAV center scan FAB - Vibrant App Green Gradient (#10b981 to #059669) */
 .nav-fab {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: #043927;
-  color: #34d399;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 
     0 0 0 4px #ffffff,
-    0 8px 20px rgba(4, 57, 39, 0.3);
+    0 8px 22px rgba(16, 185, 129, 0.45);
   border: none;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
@@ -771,21 +790,21 @@ h1, h2, h3, h4, h5, h6 {
 
 .dark .nav-fab {
   box-shadow: 
-    0 0 0 4px #041f17,
-    0 8px 20px rgba(0, 0, 0, 0.4);
+    0 0 0 4px #0f172a,
+    0 8px 22px rgba(16, 185, 129, 0.55);
 }
 
 .nav-fab:hover {
   transform: translateY(-2px) scale(1.06);
   box-shadow: 
     0 0 0 4px #ffffff,
-    0 12px 25px rgba(4, 57, 39, 0.4);
+    0 12px 28px rgba(16, 185, 129, 0.55);
 }
 
 .dark .nav-fab:hover {
   box-shadow: 
-    0 0 0 4px #041f17,
-    0 12px 25px rgba(0, 0, 0, 0.5);
+    0 0 0 4px #0f172a,
+    0 12px 28px rgba(16, 185, 129, 0.65);
 }
 
 .nav-fab:active {

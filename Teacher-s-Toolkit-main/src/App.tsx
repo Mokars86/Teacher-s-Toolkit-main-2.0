@@ -202,10 +202,11 @@ export default function App() {
 
     let earnedBonusPoints = 0;
     if (isRegistering && authReferralCode.trim()) {
-      earnedBonusPoints = 50; // New user bonus for registering via referral link
+      // Headteacher school referral grants 20 bonus points to the referred second school (10 pts for teachers)
+      earnedBonusPoints = assignedRole === 'headteacher' ? 20 : 10;
     }
 
-    const generatedRefCode = 'TEACHER-GH-' + Math.floor(1000 + Math.random() * 9000);
+    const generatedRefCode = (assignedRole === 'headteacher' ? 'SCH-REF-' : 'TEACHER-GH-') + Math.floor(1000 + Math.random() * 9000);
 
     setUserProfile((prev) => ({
       ...prev,
@@ -220,7 +221,7 @@ export default function App() {
     }));
 
     if (earnedBonusPoints > 0) {
-      alert(`🎉 Welcome! Referral link applied. You received ${earnedBonusPoints} bonus Reward Points!`);
+      alert(`🎉 Welcome! Referral link applied. Your ${assignedRole === 'headteacher' ? 'School' : 'Teacher'} account received +${earnedBonusPoints} Bonus Reward Points!`);
     }
     
     // Automatically trigger synced status on results when logging in
@@ -783,7 +784,7 @@ export default function App() {
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Referral Code (Optional)</label>
                       {authReferralCode && (
                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                          🎁 +50 Bonus Pts
+                          🎁 +10 Bonus Pts
                         </span>
                       )}
                     </div>
@@ -1293,7 +1294,7 @@ export default function App() {
                 </div>
                 <div>
                   <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">WAEC Question Bank</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Snap papers for +50 Pts, refer colleagues for +100 Pts & redeem Pro plans.</p>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Submit papers for +30 Pts, refer colleagues for +20 Pts & redeem Pro plans.</p>
                 </div>
                 <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.12)',color:'#059669',border:'1px solid rgba(16,185,129,0.25)'}}>EARN POINTS</span>
               </button>
@@ -1310,10 +1311,10 @@ export default function App() {
                 </div>
                 <div>
                   <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Refer & Earn Pro Plans</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Share your referral link on WhatsApp. Earn 100 pts per signup to unlock Pro features.</p>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Share your referral link on WhatsApp. Earn 20 pts per signup to unlock Pro features.</p>
                 </div>
                 <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
-                  +100 PTS / REFERRAL
+                  +20 PTS / REFERRAL
                 </span>
               </button>
 
@@ -2702,6 +2703,7 @@ export default function App() {
             vouchersList={vouchersList}
             onAddVoucher={(newV) => setVouchersList(prev => [newV, ...prev])}
             userProfile={userProfile}
+            setUserProfile={setUserProfile}
             onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
             isDarkMode={isDarkMode}
             onToggleDarkMode={() => setIsDarkMode(prev => !prev)}

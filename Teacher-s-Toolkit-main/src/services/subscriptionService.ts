@@ -48,6 +48,67 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlanDetails[] = [
   },
 ];
 
+export const HEADTEACHER_SCHOOL_PLANS: SubscriptionPlanDetails[] = [
+  {
+    id: 'School License Weekly',
+    name: 'Weekly School Plan',
+    priceTag: 'GH₵ 70 / week',
+    monthlyGHS: 70,
+    tagline: '7-day short-term institutional license for exam crunch & quick school evaluation',
+    features: [
+      '7 Days full multi-teacher access & broadsheet sync',
+      'Centralized Collections Hub & Fee Receipts',
+      'Digital Headteacher Signature & School Crest on Reports',
+      'Instant SMS alerts & class score export',
+      'Covers all active staff teachers during test week',
+    ],
+  },
+  {
+    id: 'School License Monthly',
+    name: 'Monthly School Plan',
+    priceTag: 'GH₵ 250 / month',
+    monthlyGHS: 250,
+    tagline: 'Flexible month-to-month institutional license for school management',
+    features: [
+      'Multi-Teacher Score Sync to Headteacher Portal',
+      'Centralized Collections Hub (School Fees, PTA, Canteen)',
+      'Digital Headteacher Signature & Official School Crest on Reports',
+      'Textbook & Asset Inventory Tracker',
+      'Includes Pro features for all active staff teachers',
+    ],
+  },
+  {
+    id: 'School License Term',
+    name: 'Quarterly / Term School Plan',
+    priceTag: 'GH₵ 750 / term',
+    monthlyGHS: 750,
+    popular: true,
+    tagline: 'Complete academic term coverage for all teachers and class broadsheets',
+    features: [
+      'Full Academic Term coverage for all classes (Basic to SHS)',
+      'Bulk Class Broadsheet PDF Export & Approval Locks',
+      'Centralized Collections Hub & Automatic Parent Receipts',
+      'SMS Parent Notifications & Attendance Alerts',
+      'Custom School Crest Branding & Headteacher Stamp',
+    ],
+  },
+  {
+    id: 'School License Year',
+    name: 'Annual / Yearly School Plan',
+    priceTag: 'GH₵ 2,000 / year',
+    monthlyGHS: 2000,
+    yearlyGHS: 2000,
+    tagline: 'Best Value! Full 12-month academic year institutional license with maximum savings',
+    features: [
+      'Full 12-Month Unlimited Institutional License',
+      'Unlimited Teachers, Classes, Students & OMR Scans',
+      'Priority WhatsApp & SMS Parent Notification Gateway',
+      'Dedicated School Support & Custom Broadsheet Layouts',
+      'Save over GH₵ 1,000 compared to monthly billing',
+    ],
+  },
+];
+
 export const PAY_AS_YOU_GO_OPTIONS = [
   {
     id: 'end_of_term_pass',
@@ -66,14 +127,21 @@ export function isPassActive(expiryDateString?: string | null): boolean {
 }
 
 export function hasProAccess(profile: UserProfile): boolean {
-  if (profile.activeSubscriptionPlan === 'Teacher Pro' || profile.activeSubscriptionPlan === 'School License') {
+  if (
+    profile.activeSubscriptionPlan === 'Teacher Pro' || 
+    profile.activeSubscriptionPlan?.includes('School') ||
+    profile.role === 'headteacher'
+  ) {
     return true;
   }
   return isPassActive(profile.endOfTermPassExpiry);
 }
 
 export function hasSchoolLicense(profile: UserProfile): boolean {
-  return profile.activeSubscriptionPlan === 'School License';
+  return (
+    profile.activeSubscriptionPlan?.includes('School') || 
+    profile.role === 'headteacher'
+  );
 }
 
 export function canScanOMR(profile: UserProfile): { allowed: boolean; remainingScans: number; reason?: string } {
@@ -227,12 +295,17 @@ export function validateAndRedeemVoucher(
 export const REDEEM_POINT_COSTS = {
   END_OF_TERM_PASS: 100,
   TEACHER_PRO_MONTH: 200,
+  SCHOOL_LICENSE_WEEKLY: 150,
+  SCHOOL_LICENSE_MONTH: 500,
   SCHOOL_LICENSE_TERM: 1000,
+  SCHOOL_LICENSE_YEAR: 2000,
 };
 
 export const REFERRAL_REWARDS = {
-  REFERRER_POINTS: 100,
-  NEW_USER_BONUS_POINTS: 50,
+  REFERRER_POINTS: 20,
+  NEW_USER_BONUS_POINTS: 10,
+  HEADTEACHER_REFERRER_POINTS: 40,
+  REFERRED_SCHOOL_BONUS_POINTS: 20,
 };
 
 export function getReferralLink(referralCode: string): string {
@@ -241,7 +314,7 @@ export function getReferralLink(referralCode: string): string {
 }
 
 export function redeemPointsForPlan(
-  planOrPassType: 'pass' | 'pro' | 'school',
+  planOrPassType: 'pass' | 'pro' | 'school' | 'school_weekly' | 'school_monthly' | 'school_term' | 'school_year',
   userProfile: UserProfile
 ): { success: boolean; message: string; updatedProfile?: Partial<UserProfile> } {
   const currentPoints = userProfile.rewardPoints || 0;
@@ -249,12 +322,15 @@ export function redeemPointsForPlan(
 
   if (planOrPassType === 'pass') requiredPoints = REDEEM_POINT_COSTS.END_OF_TERM_PASS;
   if (planOrPassType === 'pro') requiredPoints = REDEEM_POINT_COSTS.TEACHER_PRO_MONTH;
-  if (planOrPassType === 'school') requiredPoints = REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM;
+  if (planOrPassType === 'school_weekly') requiredPoints = REDEEM_POINT_COSTS.SCHOOL_LICENSE_WEEKLY;
+  if (planOrPassType === 'school_monthly') requiredPoints = REDEEM_POINT_COSTS.SCHOOL_LICENSE_MONTH;
+  if (planOrPassType === 'school' || planOrPassType === 'school_term') requiredPoints = REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM;
+  if (planOrPassType === 'school_year') requiredPoints = REDEEM_POINT_COSTS.SCHOOL_LICENSE_YEAR;
 
   if (currentPoints < requiredPoints) {
     return {
       success: false,
-      message: `Insufficient points. You need ${requiredPoints} Points, but you currently have ${currentPoints} Points. Invite colleagues (+100 pts each) to earn more!`,
+      message: `Insufficient points. You need ${requiredPoints} Points, but you currently have ${currentPoints} Points. Refer partner schools (+40 pts each for Headteachers) or colleagues (+20 pts) or submit WAEC questions (+30 pts) to earn more!`,
     };
   }
 
@@ -280,17 +356,42 @@ export function redeemPointsForPlan(
       message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Month of Teacher Pro!`,
       updatedProfile: updates,
     };
-  } else if (planOrPassType === 'school') {
-    updates.activeSubscriptionPlan = 'School License';
+  } else if (planOrPassType === 'school_weekly') {
+    updates.activeSubscriptionPlan = 'School License Weekly';
     updates.isPremium = true;
     return {
       success: true,
-      message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Term School Admin License!`,
+      message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Week School Plan!`,
+      updatedProfile: updates,
+    };
+  } else if (planOrPassType === 'school_monthly') {
+    updates.activeSubscriptionPlan = 'School License Monthly';
+    updates.isPremium = true;
+    return {
+      success: true,
+      message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Month School Plan!`,
+      updatedProfile: updates,
+    };
+  } else if (planOrPassType === 'school' || planOrPassType === 'school_term') {
+    updates.activeSubscriptionPlan = 'School License Term';
+    updates.isPremium = true;
+    return {
+      success: true,
+      message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Term School Plan!`,
+      updatedProfile: updates,
+    };
+  } else if (planOrPassType === 'school_year') {
+    updates.activeSubscriptionPlan = 'School License Year';
+    updates.isPremium = true;
+    return {
+      success: true,
+      message: `🎉 Success! Redeemed ${requiredPoints} Points for 1 Year School Plan!`,
       updatedProfile: updates,
     };
   }
 
-  return { success: false, message: 'Invalid redemption option.' };
+  return {
+    success: false,
+    message: 'Invalid plan selected.',
+  };
 }
-
-
