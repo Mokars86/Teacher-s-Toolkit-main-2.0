@@ -196,7 +196,7 @@ export function WorkshopCertificateModule({
             <div className="flex items-center gap-2">
               <img src={appLogo} alt="Teacher's Toolkit" className="w-10 h-10 object-contain drop-shadow" />
               <div className="text-left">
-                <span className="text-xs font-black text-slate-900 tracking-tight block">TEACHER'S TOOLKit</span>
+                <span className="text-xs font-black text-slate-900 tracking-tight block">Teacher's ToolKit</span>
                 <span className="text-[9px] font-bold text-amber-700 tracking-widest uppercase block">Education Tech Ghana</span>
               </div>
             </div>

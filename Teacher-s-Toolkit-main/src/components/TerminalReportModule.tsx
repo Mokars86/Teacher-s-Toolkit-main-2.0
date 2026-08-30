@@ -680,11 +680,11 @@ export function TerminalReportModule({
           </button>
           <img 
             src={appLogo} 
-            alt="TEACHER'S TOOLKit Logo" 
+            alt="Teacher's ToolKit Logo" 
             className="w-8 h-8 rounded-lg object-cover shadow-sm border border-slate-200" 
           />
           <div>
-            <span className="text-sm sm:text-base font-black tracking-tight text-emerald-900 uppercase">TEACHER'S TOOLKit</span>
+            <span className="text-sm sm:text-base font-black tracking-tight text-emerald-900">Teacher's ToolKit</span>
             <span className="hidden sm:inline text-xs text-slate-400 font-bold tracking-widest uppercase ml-2 px-2 py-0.5 border-l border-slate-200">
               Terminal Reports
             </span>
@@ -1924,7 +1924,7 @@ export function TerminalReportModule({
                       {/* Paper Bottom Watermark Footer */}
                       <div className="mt-3 flex items-center justify-between text-[8px] text-slate-400 border-t border-slate-100 pt-2 font-mono">
                         <span>OMR Report ID: {std.id}</span>
-                        <span className="font-extrabold text-emerald-800 dark:text-emerald-400">Powered by TEACHER'S TOOLKit Engine</span>
+                        <span className="font-extrabold text-emerald-800 dark:text-emerald-400">Powered by Teacher's ToolKit Engine</span>
                       </div>
                     </div>
                   );

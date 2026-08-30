@@ -827,3 +827,27 @@ h1, h2, h3, h4, h5, h6 {
   outline: 2px solid rgba(59,111,245,0.5);
   outline-offset: 2px;
 }
+
+/* =====================================================
+   PRINT MEDIA STYLES
+   ===================================================== */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .no-print, nav, .bottom-nav, header, footer {
+    display: none !important;
+  }
+  .printable-handover-slip,
+  .printable-handover-statement {
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}

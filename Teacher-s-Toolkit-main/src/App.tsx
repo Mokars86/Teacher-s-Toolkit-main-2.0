@@ -454,7 +454,7 @@ export default function App() {
               <img 
                 id="app_logo_splash"
                 src={appLogo} 
-                alt="TEACHER'S TOOLKit Logo" 
+                alt="Teacher's ToolKit Logo" 
                 className="w-28 h-28 lg:w-36 lg:h-36 rounded-3xl object-cover animate-pop-heart shadow-xl" 
                 referrerPolicy="no-referrer"
                 style={{ border: '3px solid #10b981', boxShadow: '0 0 28px rgba(16, 185, 129, 0.6)' }}
@@ -464,7 +464,7 @@ export default function App() {
           
           <div className="space-y-2 px-2">
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-wider text-center text-white drop-shadow-md">
-              TEACHER'S TOOLKit
+              Teacher's ToolKit
             </h1>
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/20 backdrop-blur-md border border-emerald-400/40 rounded-full">
               <Sparkles className="w-3.5 h-3.5 text-emerald-300 animate-spin" style={{ animationDuration: '4s' }} />
@@ -623,14 +623,14 @@ export default function App() {
                   <div className="absolute w-28 h-28 rounded-full animate-pulse" style={{background:'radial-gradient(circle, rgba(16,185,129,0.2), transparent 70%)'}} />
                   <img 
                     src={appLogo} 
-                    alt="TEACHER'S TOOLKit Logo" 
+                    alt="Teacher's ToolKit Logo" 
                     className="relative w-24 h-24 rounded-2xl object-cover" 
                     referrerPolicy="no-referrer"
                     style={{border:'3.5px solid #10b981', boxShadow:'0 0 24px rgba(16,185,129,0.5)'}}
                   />
                 </div>
                 <div className="space-y-2">
-                  <h1 className="text-lg sm:text-2xl font-black tracking-wider" style={{color:'#10b981'}}>TEACHER'S TOOLKit</h1>
+                  <h1 className="text-lg sm:text-2xl font-black tracking-wider" style={{color:'#10b981'}}>Teacher's ToolKit</h1>
                   <p className="text-xs leading-relaxed max-w-[220px] mx-auto" style={{color:'rgba(144,184,255,0.7)'}}>
                     Your all-in-one paperless grading, attendance & school management platform.
                   </p>
@@ -680,7 +680,7 @@ export default function App() {
                   <img 
                     id="app_logo_auth"
                     src={appLogo} 
-                    alt="TEACHER'S TOOLKit Logo" 
+                    alt="Teacher's ToolKit Logo" 
                     className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl object-cover" 
                     referrerPolicy="no-referrer"
                     style={{border:'3px solid #10b981',boxShadow:'0 0 16px rgba(16,185,129,0.4)'}}
@@ -923,7 +923,7 @@ export default function App() {
                 <img 
                   id="app_logo_header"
                   src={appLogo} 
-                  alt="TEACHER'S TOOLKit Logo" 
+                  alt="Teacher's ToolKit Logo" 
                   className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover" 
                   referrerPolicy="no-referrer"
                   style={{border:'2.5px solid #10b981',boxShadow:'0 0 12px rgba(16,185,129,0.4)'}}
@@ -934,28 +934,28 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 sm:gap-2">
-                  <h1 className="text-[11px] xs:text-xs sm:text-sm font-black tracking-wider whitespace-nowrap" style={{color:'#10b981'}}>TEACHER'S TOOLKit</h1>
+                  <h1 className="text-[11px] xs:text-xs sm:text-sm font-black tracking-wider whitespace-nowrap" style={{color:'#10b981'}}>Teacher's ToolKit</h1>
                   
-                  {userRole === "headteacher" ? (
-                    <select
-                      id="role_switcher_select"
-                      value={userRole}
-                      onChange={(e) => {
-                        const newRole = e.target.value as UserRole;
-                        setUserRole(newRole);
-                        if (newRole === "headteacher") {
-                          setActiveScreen(ScreenId.HEADTEACHER_PANEL);
-                        }
-                      }}
-                      className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider rounded-md px-1 py-0.5 cursor-pointer focus:outline-none hidden xs:inline-block"
-                      style={{background:'rgba(59,111,245,0.1)',border:'1px solid rgba(59,111,245,0.25)',color:'#2450db'}}
-                    >
-                      <option value="headteacher">Headteacher</option>
-                      <option value="teacher">Teacher</option>
-                    </select>
-                  ) : (
-                    <span className="chip-brand hidden sm:inline-flex">Teacher</span>
-                  )}
+                  <select
+                    id="role_switcher_select"
+                    value={userRole}
+                    onChange={(e) => {
+                      const newRole = e.target.value as UserRole;
+                      setUserRole(newRole);
+                      if (newRole === "headteacher") {
+                        setActiveScreen(ScreenId.HEADTEACHER_PANEL);
+                      } else if (newRole === "superadmin") {
+                        setActiveScreen(ScreenId.SUPER_ADMIN_PANEL);
+                      } else {
+                        setActiveScreen(ScreenId.DASHBOARD);
+                      }
+                    }}
+                    className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider rounded-md px-1.5 py-0.5 cursor-pointer focus:outline-none hidden xs:inline-block bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                  >
+                    <option value="teacher">Teacher View</option>
+                    <option value="headteacher">Headteacher Portal</option>
+                    <option value="superadmin">Super Admin</option>
+                  </select>
                 </div>
 
                 <button
@@ -1319,24 +1319,25 @@ export default function App() {
               </button>
 
               {/* Card 14: Headteacher Panel */}
-              {userRole === "headteacher" && (
-                <button
-                  id="card_action_headteacher_panel"
-                  onClick={() => setActiveScreen(ScreenId.HEADTEACHER_PANEL)}
-                  className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-hover"
-                  style={{background:'linear-gradient(135deg,#0a1433,#0f1f52)',border:'1px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 20px rgba(59,111,245,0.25)'}}
-                >
-                  <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#90b8ff,#3b6ff5)'}} />
-                  <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(165,180,252,0.15)',border:'1px solid rgba(165,180,252,0.2)'}}>
-                    <Building2 className="w-5 h-5" style={{color:'#90b8ff'}} />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black uppercase tracking-tight" style={{color:'#fff'}}>Admin Panel</h4>
-                    <p className="text-[11px] mt-1 line-clamp-2" style={{color:'rgba(165,180,252,0.7)'}}>Review submissions, audit broadsheets & lock term reports.</p>
-                  </div>
-                  <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(165,180,252,0.15)',color:'#90b8ff',border:'1px solid rgba(165,180,252,0.25)'}}>School Sync</span>
-                </button>
-              )}
+              <button
+                id="card_action_headteacher_panel"
+                onClick={() => {
+                  setUserRole("headteacher");
+                  setActiveScreen(ScreenId.HEADTEACHER_PANEL);
+                }}
+                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-hover"
+                style={{background:'linear-gradient(135deg,#0a1433,#0f1f52)',border:'1px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 20px rgba(59,111,245,0.25)'}}
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#90b8ff,#3b6ff5)'}} />
+                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(165,180,252,0.15)',border:'1px solid rgba(165,180,252,0.2)'}}>
+                  <Building2 className="w-5 h-5" style={{color:'#90b8ff'}} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-tight" style={{color:'#fff'}}>Headteacher Panel</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'rgba(165,180,252,0.7)'}}>Review submissions, audit broadsheets, verify cash hand-overs & lock term reports.</p>
+                </div>
+                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(165,180,252,0.15)',color:'#90b8ff',border:'1px solid rgba(165,180,252,0.25)'}}>School Sync</span>
+              </button>
 
             </div>
           </div>
@@ -2697,6 +2698,7 @@ export default function App() {
               setUserRole("teacher");
               setActiveScreen(ScreenId.DASHBOARD);
             }} 
+            onOpenQuestionBank={() => setActiveScreen(ScreenId.QUESTION_BANK)}
             schoolProfile={linkedSchool}
             onUpdateSchoolProfile={(updated) => setLinkedSchool(updated)}
             onLogout={handleLogoutHeadteacher}
@@ -2766,7 +2768,7 @@ export default function App() {
       case ScreenId.QUESTION_BANK:
         return (
           <QuestionBankModule
-            onBack={() => setActiveScreen(ScreenId.DASHBOARD)}
+            onBack={() => setActiveScreen(userRole === "headteacher" ? ScreenId.HEADTEACHER_PANEL : ScreenId.DASHBOARD)}
             userProfile={userProfile}
             setUserProfile={setUserProfile}
             onOpenExamBuilder={() => setActiveScreen(ScreenId.EXAM_BUILDER)}
@@ -2834,7 +2836,7 @@ export default function App() {
             <div className="relative shrink-0">
               <img 
                 src={appLogo} 
-                alt="Teacher's Toolkit Logo" 
+                alt="Teacher's ToolKit Logo" 
                 className="w-10 h-10 rounded-xl object-cover shadow-sm"
                 style={{border:'2.5px solid #10b981',boxShadow:'0 0 12px rgba(16,185,129,0.4)'}}
               />
@@ -2844,7 +2846,7 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h1 className="text-xs font-black tracking-wider truncate text-emerald-600 dark:text-emerald-400">
-                TEACHER'S TOOLKit
+                Teacher's ToolKit
               </h1>
               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
                 Classroom Command
