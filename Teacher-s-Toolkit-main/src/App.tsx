@@ -46,7 +46,7 @@ import {
 export default function App() {
   // --- STATE PERSISTENCE & INITIAL SEEDING ---
   const [activeScreen, setActiveScreen] = useState<ScreenId>(ScreenId.SPLASH);
-  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
   const [splashStatusText, setSplashStatusText] = useState<string>("Initializing offline engine...");
 
@@ -352,6 +352,19 @@ export default function App() {
     const cached = localStorage.getItem('omr_dark_mode');
     return cached === 'true';
   });
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('omr_dark_mode', String(isDarkMode));
@@ -956,6 +969,17 @@ export default function App() {
                     <option value="headteacher">Headteacher Portal</option>
                     <option value="superadmin">Super Admin</option>
                   </select>
+
+                  {!isOnline && (
+                    <span 
+                      id="badge_offline_mode" 
+                      className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider rounded-md px-1.5 py-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40"
+                      title="Working in Offline Mode. All changes automatically saved to device."
+                    >
+                      <CloudOff className="w-2.5 h-2.5 animate-pulse shrink-0 text-amber-500" />
+                      <span>Offline Mode</span>
+                    </span>
+                  )}
                 </div>
 
                 <button
