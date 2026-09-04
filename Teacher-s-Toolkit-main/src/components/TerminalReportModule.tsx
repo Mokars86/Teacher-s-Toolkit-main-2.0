@@ -181,6 +181,59 @@ const HEADTEACHER_PRESETS = {
   ]
 };
 
+export interface SubjectItem {
+  id: string;
+  name: string;
+  isCore?: boolean;
+}
+
+export interface SubjectScore {
+  examScoreRaw: number;
+  classworkScore: number;
+  homeworkScore: number;
+}
+
+export const DEFAULT_PRIMARY_SUBJECTS: SubjectItem[] = [
+  { id: "pri_eng", name: "English Language", isCore: true },
+  { id: "pri_math", name: "Mathematics", isCore: true },
+  { id: "pri_sci", name: "Natural Science", isCore: true },
+  { id: "pri_owop", name: "Our World Our People (OWOP)", isCore: true },
+  { id: "pri_rme", name: "Religious & Moral Education (RME)", isCore: true },
+  { id: "pri_gh", name: "Ghanaian Language", isCore: false },
+  { id: "pri_art", name: "Creative Arts", isCore: false },
+  { id: "pri_ict", name: "Computing", isCore: false }
+];
+
+export const DEFAULT_JHS_SUBJECTS: SubjectItem[] = [
+  { id: "jhs_eng", name: "English Language", isCore: true },
+  { id: "jhs_math", name: "Core Mathematics", isCore: true },
+  { id: "jhs_sci", name: "Integrated Science", isCore: true },
+  { id: "jhs_soc", name: "Social Studies", isCore: true },
+  { id: "jhs_rme", name: "Religious & Moral Education (RME)", isCore: true },
+  { id: "jhs_ict", name: "Computing", isCore: true },
+  { id: "jhs_ct", name: "Career Technology", isCore: false },
+  { id: "jhs_cad", name: "Creative Arts & Design", isCore: false },
+  { id: "jhs_gh", name: "Ghanaian Language", isCore: false }
+];
+
+export const DEFAULT_SHS_SUBJECTS: SubjectItem[] = [
+  { id: "shs_eng", name: "English Language", isCore: true },
+  { id: "shs_math", name: "Core Mathematics", isCore: true },
+  { id: "shs_sci", name: "Integrated Science", isCore: true },
+  { id: "shs_soc", name: "Social Studies", isCore: true },
+  { id: "shs_emath", name: "Elective Mathematics", isCore: false },
+  { id: "shs_phy", name: "Physics", isCore: false },
+  { id: "shs_chem", name: "Chemistry", isCore: false },
+  { id: "shs_bio", name: "Biology", isCore: false },
+  { id: "shs_econ", name: "Economics", isCore: false }
+];
+
+export function getDefaultSubjects(level: "primary" | "jhs" | "shs"): SubjectItem[] {
+  if (level === "primary") return DEFAULT_PRIMARY_SUBJECTS;
+  if (level === "shs") return DEFAULT_SHS_SUBJECTS;
+  return DEFAULT_JHS_SUBJECTS;
+}
+
 interface StudentReportRow {
   id: string;
   rollNumber: string;
@@ -197,6 +250,7 @@ interface StudentReportRow {
   attendancePresent: number;
   attendanceAbsent: number;
   position?: number;
+  subjectScores?: Record<string, SubjectScore>;
 }
 
 interface TerminalReportModuleProps {
@@ -236,9 +290,35 @@ export function TerminalReportModule({
     return "jhs";
   });
 
+  // Active Subjects State per level
+  const [activeSubjects, setActiveSubjects] = useState<SubjectItem[]>(() => {
+    const cached = localStorage.getItem(`omr_subjects_${schoolLevel}`);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return getDefaultSubjects(schoolLevel);
+  });
+
+  const [newSubjectInput, setNewSubjectInput] = useState<string>("");
+  const [gridScoreViewMode, setGridScoreViewMode] = useState<"summary" | "subject_matrix">("summary");
+  const [selectedMatrixSubjectId, setSelectedMatrixSubjectId] = useState<string>("");
+
+  useEffect(() => {
+    if (activeSubjects.length > 0 && !selectedMatrixSubjectId) {
+      setSelectedMatrixSubjectId(activeSubjects[0].id);
+    }
+  }, [activeSubjects]);
+
   useEffect(() => {
     localStorage.setItem("omr_school_level", schoolLevel);
   }, [schoolLevel]);
+
+  useEffect(() => {
+    localStorage.setItem(`omr_subjects_${schoolLevel}`, JSON.stringify(activeSubjects));
+  }, [activeSubjects, schoolLevel]);
   
   // Weights: Exam + Class Assessments (CA) must total 100%
   const [examWeight, setExamWeight] = useState<number>(60); // e.g. 60% Exam, 40% CA
@@ -267,6 +347,65 @@ export function TerminalReportModule({
   const [includePosition, setIncludePosition] = useState<boolean>(true);
   const [includeAttendance, setIncludeAttendance] = useState<boolean>(true);
   const [showWatermark, setShowWatermark] = useState<boolean>(true);
+
+  // Subject management functions
+  const handleAddSubject = (subjectName?: string, isCore = false) => {
+    const nameToUse = (subjectName || newSubjectInput).trim();
+    if (!nameToUse) return;
+    if (activeSubjects.some(s => s.name.toLowerCase() === nameToUse.toLowerCase())) {
+      alert(`Subject "${nameToUse}" already exists in the report template.`);
+      return;
+    }
+    const newSub: SubjectItem = {
+      id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: nameToUse,
+      isCore
+    };
+    const updated = [...activeSubjects, newSub];
+    setActiveSubjects(updated);
+    setNewSubjectInput("");
+    setStudents(prev => recomputeAcademicMetrics(prev, examWeight, maxExamValue, schoolLevel, updated));
+  };
+
+  const handleRemoveSubject = (id: string) => {
+    if (activeSubjects.length <= 1) {
+      alert("You must keep at least one subject in the terminal report template.");
+      return;
+    }
+    const target = activeSubjects.find(s => s.id === id);
+    if (target && confirm(`Remove "${target.name}" from the terminal report?`)) {
+      const updated = activeSubjects.filter(s => s.id !== id);
+      setActiveSubjects(updated);
+      if (selectedMatrixSubjectId === id && updated.length > 0) {
+        setSelectedMatrixSubjectId(updated[0].id);
+      }
+      setStudents(prev => recomputeAcademicMetrics(prev, examWeight, maxExamValue, schoolLevel, updated));
+    }
+  };
+
+  const handleResetSubjects = () => {
+    if (confirm(`Reset subjects to standard GES defaults for ${schoolLevel.toUpperCase()}?`)) {
+      const defaults = getDefaultSubjects(schoolLevel);
+      setActiveSubjects(defaults);
+      if (defaults.length > 0) setSelectedMatrixSubjectId(defaults[0].id);
+      setStudents(prev => recomputeAcademicMetrics(prev, examWeight, maxExamValue, schoolLevel, defaults));
+    }
+  };
+
+  const handleSchoolLevelSelect = (level: "primary" | "jhs" | "shs") => {
+    setSchoolLevel(level);
+    const cached = localStorage.getItem(`omr_subjects_${level}`);
+    let newSubs = getDefaultSubjects(level);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) newSubs = parsed;
+      } catch (e) {}
+    }
+    setActiveSubjects(newSubs);
+    if (newSubs.length > 0) setSelectedMatrixSubjectId(newSubs[0].id);
+    setStudents(prev => recomputeAcademicMetrics(prev, examWeight, maxExamValue, level, newSubs));
+  };
 
   // Initialize roster based on class and existing graded results
   useEffect(() => {
@@ -400,7 +539,7 @@ export function TerminalReportModule({
     });
 
     // Complete computations (Positions, grades)
-    const finalized = recomputeAcademicMetrics(processedStudents, examWeight, maxExamValue, schoolLevel);
+    const finalized = recomputeAcademicMetrics(processedStudents, examWeight, maxExamValue, schoolLevel, activeSubjects);
     setStudents(finalized);
   }, [selectedClass, resultsList, schoolLevel]);
 
@@ -409,26 +548,37 @@ export function TerminalReportModule({
     list: StudentReportRow[], 
     eWeight: number, 
     rawMax: number,
-    level: "primary" | "jhs" | "shs" = "jhs"
+    level: "primary" | "jhs" | "shs" = "jhs",
+    subjects: SubjectItem[] = activeSubjects
   ): StudentReportRow[] => {
     const caWeight = 100 - eWeight;
 
-    // First pass: Calculate individual total percentage scores
     const computed = list.map(student => {
-      // Convert raw exam score to percentage, then apply weight
-      const examPct = (student.examScoreRaw / rawMax) * 100;
-      const roundedExamPct = Math.min(100, Math.max(0, Math.round(examPct)));
-      const weightedExam = (roundedExamPct * eWeight) / 100;
+      let totalSubjectTotalsSum = 0;
+      const scoresMap = student.subjectScores || {};
 
-      // Classwork & Homework combined are out of 100 max in normal scales
-      // Let's assume average of classwork (out of 50) & homework (out of 50) is the total CA percentage
-      const caTotal = student.classworkScore + student.homeworkScore; // max 100
-      const weightedCA = (caTotal * caWeight) / 100;
+      subjects.forEach((sub, idx) => {
+        const subScore = scoresMap[sub.id] || {
+          examScoreRaw: Math.max(0, Math.min(rawMax, student.examScoreRaw + (idx % 2 === 0 ? (idx % 3) - 1 : -(idx % 3)))),
+          classworkScore: Math.max(0, Math.min(50, student.classworkScore + (idx % 2 === 1 ? 2 : -2))),
+          homeworkScore: Math.max(0, Math.min(50, student.homeworkScore + (idx % 2 === 0 ? 1 : -1)))
+        };
 
-      const finalTotal = Math.min(100, Math.round(weightedExam + weightedCA));
+        const examPct = (subScore.examScoreRaw / rawMax) * 100;
+        const weightedExam = (examPct * eWeight) / 100;
+        const caTotal = subScore.classworkScore + subScore.homeworkScore;
+        const weightedCA = (caTotal * caWeight) / 100;
+        const subFinalTotal = Math.min(100, Math.round(weightedExam + weightedCA));
+
+        totalSubjectTotalsSum += subFinalTotal;
+      });
+
+      const finalTotal = subjects.length > 0 
+        ? Math.min(100, Math.round(totalSubjectTotalsSum / subjects.length))
+        : 0;
+
       const scaleResult = calculateGESGrade(finalTotal, level);
 
-      // Default smart teacher remarks if blank
       let tRemark = student.remarksTeacher;
       let hRemark = student.remarksHead;
       if (!tRemark) {
@@ -444,7 +594,7 @@ export function TerminalReportModule({
 
       return {
         ...student,
-        examScorePercent: roundedExamPct,
+        examScorePercent: Math.round((student.examScoreRaw / rawMax) * 100),
         totalScore: finalTotal,
         grade: scaleResult.grade,
         remark: scaleResult.remark,
@@ -453,19 +603,14 @@ export function TerminalReportModule({
       };
     });
 
-    // Second pass: Compute class positions based on totalScore descending
     const sorted = [...computed].sort((a, b) => b.totalScore - a.totalScore);
-    
-    // Assign position ranks
-    const positioned = computed.map(original => {
+    return computed.map(original => {
       const rankIndex = sorted.findIndex(s => s.id === original.id);
       return {
         ...original,
         position: rankIndex + 1
       };
     });
-
-    return positioned;
   };
 
   // Triggers recalculations whenever variables change
@@ -473,16 +618,50 @@ export function TerminalReportModule({
     setStudents(prev => {
       const updated = prev.map(s => {
         if (s.id === id) {
-          // Keep score boundaries safe
           let val = isNaN(value) ? 0 : value;
           if (field === "examScoreRaw") val = Math.min(maxExamValue, Math.max(0, val));
-          else val = Math.min(50, Math.max(0, val)); // CA elements are max 50 each
+          else val = Math.min(50, Math.max(0, val));
 
           return { ...s, [field]: val };
         }
         return s;
       });
-      return recomputeAcademicMetrics(updated, examWeight, maxExamValue, schoolLevel);
+      return recomputeAcademicMetrics(updated, examWeight, maxExamValue, schoolLevel, activeSubjects);
+    });
+  };
+
+  const handleSubjectScoreChange = (
+    studentId: string,
+    subjectId: string,
+    field: "examScoreRaw" | "classworkScore" | "homeworkScore",
+    value: number
+  ) => {
+    setStudents(prev => {
+      const updated = prev.map(s => {
+        if (s.id === studentId) {
+          let v = isNaN(value) ? 0 : value;
+          if (field === "examScoreRaw") v = Math.min(maxExamValue, Math.max(0, v));
+          else v = Math.min(50, Math.max(0, v));
+
+          const existingScores = s.subjectScores || {};
+          const curSubScore = existingScores[subjectId] || {
+            examScoreRaw: s.examScoreRaw,
+            classworkScore: s.classworkScore,
+            homeworkScore: s.homeworkScore
+          };
+
+          const updatedScores = {
+            ...existingScores,
+            [subjectId]: {
+              ...curSubScore,
+              [field]: v
+            }
+          };
+          return { ...s, subjectScores: updatedScores };
+        }
+        return s;
+      });
+      return recomputeAcademicMetrics(updated, examWeight, maxExamValue, schoolLevel, activeSubjects);
     });
   };
 
@@ -845,10 +1024,7 @@ export function TerminalReportModule({
                           key={lvl.id}
                           type="button"
                           id={`btn_school_level_${lvl.id}`}
-                          onClick={() => {
-                            setSchoolLevel(lvl.id as any);
-                            setStudents(prev => recomputeAcademicMetrics(prev, examWeight, maxExamValue, lvl.id as any));
-                          }}
+                          onClick={() => handleSchoolLevelSelect(lvl.id as any)}
                           className={`p-3 rounded-xl border text-left transition-all duration-200 ${
                             schoolLevel === lvl.id
                               ? "border-emerald-500 bg-emerald-50/55 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-350 ring-2 ring-emerald-500/20"
@@ -918,6 +1094,108 @@ export function TerminalReportModule({
                     <span className="font-bold text-emerald-600">
                       {totalStudents > 0 ? Math.round((readyReportsCount / totalStudents) * 100) : 0}% complete
                     </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Subject Template Manager Card */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 md:col-span-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-emerald-600" />
+                      <span>Subject Template Manager ({schoolLevel.toUpperCase()})</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Customize the subjects evaluated on student terminal reports for this level.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetSubjects}
+                    className="self-start sm:self-auto px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg flex items-center gap-1.5 transition"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reset GES Defaults</span>
+                  </button>
+                </div>
+
+                {/* Active subjects badge grid */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Active Subjects ({activeSubjects.length})</span>
+                  <div className="flex flex-wrap gap-2">
+                    {activeSubjects.map((sub) => (
+                      <div 
+                        key={sub.id} 
+                        className={`group px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition ${
+                          sub.isCore 
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
+                            : "bg-slate-50 border-slate-200 text-slate-800"
+                        }`}
+                      >
+                        <span>{sub.name}</span>
+                        {sub.isCore && <span className="text-[9px] bg-emerald-200 text-emerald-800 px-1.5 py-0.2 rounded font-black uppercase">Core</span>}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSubject(sub.id)}
+                          className="p-0.5 hover:bg-rose-100 text-slate-400 hover:text-rose-600 rounded transition"
+                          title={`Remove ${sub.name}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Add subject row */}
+                <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="flex-1 flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Enter custom subject name (e.g., French, Physical Education)..."
+                      value={newSubjectInput}
+                      onChange={(e) => setNewSubjectInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddSubject(); }}
+                      className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddSubject()}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Subject</span>
+                    </button>
+                  </div>
+                  
+                  {/* Preset quick picker */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Quick Add:</span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          handleAddSubject(e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                      className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-emerald-500"
+                    >
+                      <option value="">Select Elective/Preset...</option>
+                      <option value="French">French</option>
+                      <option value="Arabic">Arabic</option>
+                      <option value="Physical Education">Physical Education</option>
+                      <option value="History">History</option>
+                      <option value="Technical Drawing">Technical Drawing</option>
+                      <option value="Food & Nutrition">Food & Nutrition</option>
+                      <option value="Management in Living">Management in Living</option>
+                      <option value="General Knowledge in Art">General Knowledge in Art</option>
+                      <option value="Cost Accounting">Cost Accounting</option>
+                      <option value="Financial Accounting">Financial Accounting</option>
+                      <option value="Business Management">Business Management</option>
+                      <option value="Geography">Geography</option>
+                      <option value="Government">Government</option>
+                      <option value="Literature in English">Literature in English</option>
+                      <option value="Music">Music</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -1058,25 +1336,29 @@ export function TerminalReportModule({
 
                 {/* 2. Subject Performance Indicators */}
                 {(() => {
-                  const subjects = [
-                    { name: "English Language", offset: 2 },
-                    { name: "Mathematics", offset: -4 },
-                    { name: "Integrated Science", offset: 1 },
-                    { name: "Social Studies", offset: 3 },
-                    { name: "Information Technology", offset: 6 }
-                  ];
-
                   return (
                     <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
                       <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                         <BookOpen className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Core Subject Averages</span>
+                        <span>Active Subject Averages</span>
                       </h4>
                       <div className="space-y-2">
-                        {subjects.map((sub, idx) => {
-                          const avg = Math.min(100, Math.max(0, Math.round(classAverage + sub.offset)));
+                        {activeSubjects.slice(0, 6).map((sub) => {
+                          let subSum = 0;
+                          students.forEach(std => {
+                            const sc = std.subjectScores?.[sub.id] || {
+                              examScoreRaw: std.examScoreRaw,
+                              classworkScore: std.classworkScore,
+                              homeworkScore: std.homeworkScore
+                            };
+                            const exPct = (sc.examScoreRaw / maxExamValue) * 100;
+                            const wEx = (exPct * examWeight) / 100;
+                            const wCA = ((sc.classworkScore + sc.homeworkScore) * (100 - examWeight)) / 100;
+                            subSum += Math.min(100, Math.round(wEx + wCA));
+                          });
+                          const avg = students.length > 0 ? Math.round(subSum / students.length) : classAverage;
                           return (
-                            <div key={idx} className="flex items-center justify-between text-xs">
+                            <div key={sub.id} className="flex items-center justify-between text-xs">
                               <span className="font-semibold text-slate-600 truncate max-w-[140px]">{sub.name}</span>
                               <div className="flex items-center gap-2">
                                 <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
@@ -1168,7 +1450,7 @@ export function TerminalReportModule({
               </div>
             </div>
 
-            {/* Search and context parameters status banner */}
+            {/* Search, view mode switcher, and context parameters status banner */}
             <div className="flex flex-col md:flex-row gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div className="relative flex-1">
                 <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
@@ -1180,14 +1462,75 @@ export function TerminalReportModule({
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-emerald-500"
                 />
               </div>
+
+              {/* View Mode Toggle: Summary vs Subject Matrix */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setGridScoreViewMode("summary")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                    gridScoreViewMode === "summary"
+                      ? "bg-white text-emerald-900 shadow-xs font-black"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Summary Assessment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGridScoreViewMode("subject_matrix")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                    gridScoreViewMode === "subject_matrix"
+                      ? "bg-emerald-600 text-white shadow-xs font-black"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Subject Score Matrix</span>
+                </button>
+              </div>
+
               <div className="flex gap-2 text-[11px] font-bold text-slate-500 bg-slate-50 p-2 rounded-xl border border-slate-100 overflow-x-auto whitespace-nowrap">
                 <span>Class: <strong className="text-emerald-700">{selectedClass}</strong></span>
                 <span className="mx-1 border-r border-slate-200"></span>
-                <span>Exam Weight: <strong className="text-emerald-700">{examWeight}%</strong></span>
-                <span className="mx-1 border-r border-slate-200"></span>
-                <span>CA Weight: <strong className="text-emerald-700">{100 - examWeight}%</strong></span>
+                <span>Level: <strong className="text-emerald-700">{schoolLevel.toUpperCase()}</strong></span>
               </div>
             </div>
+
+            {/* Subject Selector Bar (Visible when in Subject Matrix Mode) */}
+            {gridScoreViewMode === "subject_matrix" && (
+              <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-emerald-900 uppercase tracking-widest flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Select Subject to Edit Student Marks</span>
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-bold">
+                    Editing subject marks for {activeSubjects.find(s => s.id === selectedMatrixSubjectId)?.name || "Selected Subject"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {activeSubjects.map((sub) => {
+                    const isSel = sub.id === selectedMatrixSubjectId;
+                    return (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => setSelectedMatrixSubjectId(sub.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                          isSel
+                            ? "bg-emerald-700 text-white shadow-sm ring-2 ring-emerald-500/40 font-black"
+                            : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span>{sub.name}</span>
+                        {sub.isCore && <span className={`text-[8px] px-1 py-0.2 rounded font-mono ${isSel ? "bg-emerald-900 text-white" : "bg-slate-100 text-slate-500"}`}>CORE</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Spreadsheet Scroll Grid Container */}
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
@@ -1197,12 +1540,27 @@ export function TerminalReportModule({
                     <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                       <th className="px-5 py-3.5 w-16">Roll #</th>
                       <th className="px-5 py-3.5 min-w-[180px]">Student Name</th>
-                      <th className="px-5 py-3.5 w-24">OMR Exam ({maxExamValue})</th>
-                      <th className="px-5 py-3.5 w-24">Exam ({examWeight}%)</th>
-                      <th className="px-5 py-3.5 w-32">Classwork (50)</th>
-                      <th className="px-5 py-3.5 w-32">Homework (50)</th>
-                      <th className="px-5 py-3.5 w-24 bg-emerald-50/40 text-emerald-800">Total (100)</th>
-                      <th className="px-5 py-3.5 w-20 text-center">Grade</th>
+                      {gridScoreViewMode === "summary" ? (
+                        <>
+                          <th className="px-5 py-3.5 w-24">OMR Exam ({maxExamValue})</th>
+                          <th className="px-5 py-3.5 w-24">Exam ({examWeight}%)</th>
+                          <th className="px-5 py-3.5 w-32">Classwork (50)</th>
+                          <th className="px-5 py-3.5 w-32">Homework (50)</th>
+                          <th className="px-5 py-3.5 w-24 bg-emerald-50/40 text-emerald-800">Overall Total (100)</th>
+                          <th className="px-5 py-3.5 w-20 text-center">Grade</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="px-5 py-3.5 bg-emerald-50/50 text-emerald-900 font-black min-w-[140px]">
+                            {activeSubjects.find(s => s.id === selectedMatrixSubjectId)?.name || "Subject"}
+                          </th>
+                          <th className="px-5 py-3.5 w-28">Exam Raw ({maxExamValue})</th>
+                          <th className="px-5 py-3.5 w-32">Classwork (50)</th>
+                          <th className="px-5 py-3.5 w-32">Homework (50)</th>
+                          <th className="px-5 py-3.5 w-28 bg-emerald-50/40 text-emerald-800 font-black">Subject Total %</th>
+                          <th className="px-5 py-3.5 w-20 text-center">Subject Grade</th>
+                        </>
+                      )}
                       <th className="px-5 py-3.5 w-16"></th>
                     </tr>
                   </thead>
@@ -1215,70 +1573,150 @@ export function TerminalReportModule({
                       </tr>
                     ) : (
                       filteredStudents.map((std) => {
-                        const scoreMeta = calculateGESGrade(std.totalScore);
+                        const scoreMeta = calculateGESGrade(std.totalScore, schoolLevel);
+                        
+                        // Per-subject scores if in Subject Matrix mode
+                        const curSubId = selectedMatrixSubjectId || (activeSubjects[0] ? activeSubjects[0].id : "");
+                        const subScoresMap = std.subjectScores || {};
+                        const curSubScore = subScoresMap[curSubId] || {
+                          examScoreRaw: std.examScoreRaw,
+                          classworkScore: std.classworkScore,
+                          homeworkScore: std.homeworkScore
+                        };
+
+                        const subExPct = (curSubScore.examScoreRaw / maxExamValue) * 100;
+                        const subWEx = (subExPct * examWeight) / 100;
+                        const subWCA = ((curSubScore.classworkScore + curSubScore.homeworkScore) * (100 - examWeight)) / 100;
+                        const subTotalPct = Math.min(100, Math.round(subWEx + subWCA));
+                        const subGradeMeta = calculateGESGrade(subTotalPct, schoolLevel);
+
                         return (
                           <tr key={std.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-5 py-3.5 font-mono font-bold text-slate-400">{std.rollNumber}</td>
                             <td className="px-5 py-3.5 font-bold text-slate-800">{std.name}</td>
                             
-                            {/* Raw OMR score */}
-                            <td className="px-5 py-3.5">
-                              <input 
-                                type="number"
-                                value={std.examScoreRaw}
-                                onChange={(e) => handleScoreChange(std.id, "examScoreRaw", parseInt(e.target.value) || 0)}
-                                className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
-                                max={maxExamValue}
-                                min={0}
-                              />
-                            </td>
+                            {gridScoreViewMode === "summary" ? (
+                              <>
+                                {/* Raw OMR score */}
+                                <td className="px-5 py-3.5">
+                                  <input 
+                                    type="number"
+                                    value={std.examScoreRaw}
+                                    onChange={(e) => handleScoreChange(std.id, "examScoreRaw", parseInt(e.target.value) || 0)}
+                                    className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                    max={maxExamValue}
+                                    min={0}
+                                  />
+                                </td>
 
-                            {/* Scale score calculated preview */}
-                            <td className="px-5 py-3.5 font-mono font-bold text-slate-500">
-                              {std.examScorePercent}% &rarr; {Math.round((std.examScorePercent * examWeight) / 100)}%
-                            </td>
+                                {/* Scale score calculated preview */}
+                                <td className="px-5 py-3.5 font-mono font-bold text-slate-500">
+                                  {std.examScorePercent}% &rarr; {Math.round((std.examScorePercent * examWeight) / 100)}%
+                                </td>
 
-                            {/* Editable Classwork */}
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-1.5">
-                                <input 
-                                  type="number"
-                                  value={std.classworkScore}
-                                  onChange={(e) => handleScoreChange(std.id, "classworkScore", parseInt(e.target.value) || 0)}
-                                  className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
-                                  max={50}
-                                  min={0}
-                                />
-                                <span className="text-[10px] font-bold text-slate-400">/50</span>
-                              </div>
-                            </td>
+                                {/* Editable Classwork */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input 
+                                      type="number"
+                                      value={std.classworkScore}
+                                      onChange={(e) => handleScoreChange(std.id, "classworkScore", parseInt(e.target.value) || 0)}
+                                      className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                      max={50}
+                                      min={0}
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-400">/50</span>
+                                  </div>
+                                </td>
 
-                            {/* Editable Homework */}
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-1.5">
-                                <input 
-                                  type="number"
-                                  value={std.homeworkScore}
-                                  onChange={(e) => handleScoreChange(std.id, "homeworkScore", parseInt(e.target.value) || 0)}
-                                  className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
-                                  max={50}
-                                  min={0}
-                                />
-                                <span className="text-[10px] font-bold text-slate-400">/50</span>
-                              </div>
-                            </td>
+                                {/* Editable Homework */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input 
+                                      type="number"
+                                      value={std.homeworkScore}
+                                      onChange={(e) => handleScoreChange(std.id, "homeworkScore", parseInt(e.target.value) || 0)}
+                                      className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                      max={50}
+                                      min={0}
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-400">/50</span>
+                                  </div>
+                                </td>
 
-                            {/* Calculated Total */}
-                            <td className="px-5 py-3.5 bg-emerald-50/20 font-black font-mono text-emerald-800 text-sm">
-                              {std.totalScore}%
-                            </td>
+                                {/* Calculated Total */}
+                                <td className="px-5 py-3.5 bg-emerald-50/20 font-black font-mono text-emerald-800 text-sm">
+                                  {std.totalScore}%
+                                </td>
 
-                            {/* Calculated Grade Badge */}
-                            <td className="px-5 py-3.5 text-center">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider ${scoreMeta.bg} ${scoreMeta.text}`}>
-                                {scoreMeta.grade}
-                              </span>
-                            </td>
+                                {/* Calculated Grade Badge */}
+                                <td className="px-5 py-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider ${scoreMeta.bg} ${scoreMeta.text}`}>
+                                    {scoreMeta.grade}
+                                  </span>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="px-5 py-3.5 font-bold text-emerald-800 bg-emerald-50/20">
+                                  {activeSubjects.find(s => s.id === curSubId)?.name || "Subject"}
+                                </td>
+
+                                {/* Subject Raw Exam Input */}
+                                <td className="px-5 py-3.5">
+                                  <input 
+                                    type="number"
+                                    value={curSubScore.examScoreRaw}
+                                    onChange={(e) => handleSubjectScoreChange(std.id, curSubId, "examScoreRaw", parseInt(e.target.value) || 0)}
+                                    className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                    max={maxExamValue}
+                                    min={0}
+                                  />
+                                </td>
+
+                                {/* Subject Classwork Input */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input 
+                                      type="number"
+                                      value={curSubScore.classworkScore}
+                                      onChange={(e) => handleSubjectScoreChange(std.id, curSubId, "classworkScore", parseInt(e.target.value) || 0)}
+                                      className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                      max={50}
+                                      min={0}
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-400">/50</span>
+                                  </div>
+                                </td>
+
+                                {/* Subject Homework Input */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input 
+                                      type="number"
+                                      value={curSubScore.homeworkScore}
+                                      onChange={(e) => handleSubjectScoreChange(std.id, curSubId, "homeworkScore", parseInt(e.target.value) || 0)}
+                                      className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold font-mono focus:bg-white focus:outline-emerald-500"
+                                      max={50}
+                                      min={0}
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-400">/50</span>
+                                  </div>
+                                </td>
+
+                                {/* Calculated Subject Total */}
+                                <td className="px-5 py-3.5 bg-emerald-50/30 font-black font-mono text-emerald-900 text-sm">
+                                  {subTotalPct}%
+                                </td>
+
+                                {/* Subject Grade Badge */}
+                                <td className="px-5 py-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider ${subGradeMeta.bg} ${subGradeMeta.text}`}>
+                                    {subGradeMeta.grade}
+                                  </span>
+                                </td>
+                              </>
+                            )}
 
                             {/* Actions (Delete row) */}
                             <td className="px-5 py-3.5 text-right">
@@ -1790,25 +2228,26 @@ export function TerminalReportModule({
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200">
-                              {/* Integrated general academic subjects for Ghana Basic/JHS report card */}
-                              {[
-                                { name: "English Language", cw: std.classworkScore, hw: std.homeworkScore, raw: std.examScoreRaw },
-                                { name: "Mathematics", cw: std.classworkScore, hw: std.homeworkScore, raw: std.examScoreRaw },
-                                { name: "Science", cw: Math.max(0, std.classworkScore - 2), hw: Math.max(0, std.homeworkScore - 1), raw: Math.max(0, std.examScoreRaw - 3) },
-                                { name: "Social Studies", cw: Math.min(50, std.classworkScore + 3), hw: Math.min(50, std.homeworkScore + 1), raw: Math.min(maxExamValue, std.examScoreRaw + 2) },
-                                { name: "Information Technology", cw: Math.min(50, std.classworkScore + 5), hw: Math.min(50, std.homeworkScore + 4), raw: Math.min(maxExamValue, std.examScoreRaw + 1) }
-                              ].map((sub, sIdx) => {
-                                const examPct = (sub.raw / maxExamValue) * 100;
+                              {activeSubjects.map((sub, sIdx) => {
+                                const subScore = std.subjectScores?.[sub.id] || {
+                                  examScoreRaw: Math.max(0, Math.min(maxExamValue, std.examScoreRaw + (sIdx % 2 === 0 ? (sIdx % 3) - 1 : -(sIdx % 3)))),
+                                  classworkScore: Math.max(0, Math.min(50, std.classworkScore + (sIdx % 2 === 1 ? 2 : -2))),
+                                  homeworkScore: Math.max(0, Math.min(50, std.homeworkScore + (sIdx % 2 === 0 ? 1 : -1)))
+                                };
+                                const examPct = (subScore.examScoreRaw / maxExamValue) * 100;
                                 const weightedExam = (examPct * examWeight) / 100;
-                                const caTotal = sub.cw + sub.hw;
+                                const caTotal = subScore.classworkScore + subScore.homeworkScore;
                                 const weightedCA = (caTotal * (100 - examWeight)) / 100;
                                 const finalTotal = Math.min(100, Math.round(weightedExam + weightedCA));
-                                const subScale = calculateGESGrade(finalTotal);
+                                const subScale = calculateGESGrade(finalTotal, schoolLevel);
 
                                 return (
-                                  <tr key={sIdx} className={sIdx % 2 === 0 ? "bg-white" : "bg-slate-50/70"}>
-                                    <td className="p-2.5 border-r border-slate-200 font-bold text-slate-900">{sub.name}</td>
-                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{sub.raw}/{maxExamValue}</td>
+                                  <tr key={sub.id} className={sIdx % 2 === 0 ? "bg-white" : "bg-slate-50/70"}>
+                                    <td className="p-2.5 border-r border-slate-200 font-bold text-slate-900 flex items-center justify-between">
+                                      <span>{sub.name}</span>
+                                      {sub.isCore && <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-1.5 py-0.2 rounded">CORE</span>}
+                                    </td>
+                                    <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{subScore.examScoreRaw}/{maxExamValue}</td>
                                     <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{Math.round(weightedExam)}%</td>
                                     <td className="p-2.5 border-r border-slate-200 text-center font-mono text-slate-600">{Math.round(weightedCA)}%</td>
                                     <td className="p-2.5 border-r border-slate-200 text-center font-mono bg-emerald-50/80 font-black text-emerald-900 text-xs">

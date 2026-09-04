@@ -295,6 +295,18 @@ export function HeadteacherPanel({
     }
   };
 
+  const handleBackNavigation = () => {
+    if (selectedHandoverForPrint) {
+      setSelectedHandoverForPrint(null);
+    } else if (activeLedgerCategoryModal) {
+      setActiveLedgerCategoryModal(null);
+    } else if (activeTab !== "matrix") {
+      setActiveTab("matrix");
+    }
+  };
+
+  const isSubViewActive = activeTab !== "matrix" || selectedHandoverForPrint !== null || activeLedgerCategoryModal !== null;
+
   const totalCanteenToday = teacherCollections.reduce((sum, c) => sum + c.canteenAmount, 0);
   const totalPtaTerm = teacherCollections.reduce((sum, c) => sum + c.ptaAmount, 0);
   const totalFeesTerm = teacherCollections.reduce((sum, c) => sum + c.schoolFeesAmount, 0);
@@ -460,14 +472,16 @@ export function HeadteacherPanel({
       {/* ── COMPACT MOBILE TOP HEADER (MOBILE ONLY, HIDDEN ON DESKTOP) ── */}
       <header className="md:hidden flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-2.5 min-w-0">
-          <button 
-            id="btn_mob_back_headteacher"
-            onClick={onBack}
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300 shrink-0"
-            title="Return to teacher command center"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
+          {isSubViewActive && (
+            <button 
+              id="btn_mob_back_headteacher"
+              onClick={handleBackNavigation}
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300 shrink-0"
+              title="Back to Overview"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
 
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-black shrink-0">
@@ -503,14 +517,16 @@ export function HeadteacherPanel({
           {/* Header Branding */}
           <div className="p-4 border-b border-slate-100 dark:border-slate-800 space-y-3">
             <div className="flex items-center gap-3">
-              <button 
-                id="btn_back_headteacher_panel"
-                onClick={onBack}
-                className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300"
-                title="Return to teacher command center"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
+              {isSubViewActive && (
+                <button 
+                  id="btn_back_headteacher_panel"
+                  onClick={handleBackNavigation}
+                  className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300"
+                  title="Back to Overview"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              )}
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-sm shrink-0">
                   {currentSchool.logoUrl ? (

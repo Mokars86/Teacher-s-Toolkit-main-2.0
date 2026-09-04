@@ -1342,26 +1342,6 @@ export default function App() {
                 </span>
               </button>
 
-              {/* Card 14: Headteacher Panel */}
-              <button
-                id="card_action_headteacher_panel"
-                onClick={() => {
-                  setUserRole("headteacher");
-                  setActiveScreen(ScreenId.HEADTEACHER_PANEL);
-                }}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-hover"
-                style={{background:'linear-gradient(135deg,#0a1433,#0f1f52)',border:'1px solid rgba(59,111,245,0.3)',boxShadow:'0 4px 20px rgba(59,111,245,0.25)'}}
-              >
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#90b8ff,#3b6ff5)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(165,180,252,0.15)',border:'1px solid rgba(165,180,252,0.2)'}}>
-                  <Building2 className="w-5 h-5" style={{color:'#90b8ff'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black uppercase tracking-tight" style={{color:'#fff'}}>Headteacher Panel</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2" style={{color:'rgba(165,180,252,0.7)'}}>Review submissions, audit broadsheets, verify cash hand-overs & lock term reports.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(165,180,252,0.15)',color:'#90b8ff',border:'1px solid rgba(165,180,252,0.25)'}}>School Sync</span>
-              </button>
 
             </div>
           </div>
@@ -2719,7 +2699,9 @@ export default function App() {
         return (
           <HeadteacherPanel 
             onBack={() => {
-              setUserRole("teacher");
+              if (userRole === "headteacher") {
+                return;
+              }
               setActiveScreen(ScreenId.DASHBOARD);
             }} 
             onOpenQuestionBank={() => setActiveScreen(ScreenId.QUESTION_BANK)}
