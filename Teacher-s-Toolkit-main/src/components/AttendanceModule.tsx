@@ -4,6 +4,7 @@ import {
   TrendingUp, Sparkles, Download, Search, Share2, CheckCircle2, 
   AlertCircle, Filter, CalendarDays, FileText, PieChart, Info, MoreHorizontal
 } from "lucide-react";
+import { dbService } from "../services/supabaseClient";
 
 interface AttendanceRecord {
   id: string; // class_date
@@ -19,53 +20,82 @@ interface AttendanceRecord {
 interface AttendanceModuleProps {
   onBack: () => void;
   resultsList: any[];
+  selectedClass?: string;
+  setSelectedClass?: (cls: string) => void;
 }
 
-// Pre-seeded lists of students for default classes
-const DEFAULT_ROSTERS: { [className: string]: string[] } = {
-  "JHS 2 Gold": [
-    "Kojo Mensah",
-    "Ama Serwaa",
-    "Kwame Boateng",
-    "Efua Ansah",
-    "Yaw Osei",
-    "Abena Appiah",
-    "Emmanuel Owusu",
-    "Sarah Jenkins",
-    "Benjamin Thompson",
-    "Michael Rodriguez"
-  ],
-  "Grade 10-A": [
-    "John Doe",
-    "Alice Johnson",
-    "Kofi Appiah",
-    "Ama Mensah",
-    "Kwesi Boateng",
-    "Grace Ansah",
-    "Richard Osei"
-  ],
-  "JHS 3 Diamond": [
-    "Derrick Mensah",
-    "Phyllis Serwaa",
-    "Clement Boateng",
-    "Mercy Ansah",
-    "Stephen Osei",
-    "Blessing Appiah"
-  ]
+const isMockClassName = (name?: string | null): boolean => {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  return (
+    n === 'grade 10-a' ||
+    n === 'grade 10- a' ||
+    n === 'grade 10 a' ||
+    n === 'grade 10-b' ||
+    n === 'grade 10' ||
+    n === 'jhs 3 diamond' ||
+    n === 'basic 5 green' ||
+    n === 'basic 5' ||
+    n === 'class 5' ||
+    n === 'jhs 2 gold' ||
+    n === 'primary 6 ruby'
+  );
 };
 
-export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps) {
+export function AttendanceModule({ 
+  onBack, 
+  resultsList,
+  selectedClass: propSelectedClass,
+  setSelectedClass: propSetSelectedClass
+}: AttendanceModuleProps) {
+  // Load custom student rosters from localStorage if saved
+  const [customRosters, setCustomRosters] = useState<{ [className: string]: string[] }>(() => {
+    const cached = localStorage.getItem("omr_custom_rosters");
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        const sanitized: { [className: string]: string[] } = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (!isMockClassName(k)) {
+            sanitized[k] = Array.isArray(v) ? (v as string[]).filter(n => typeof n === 'string' && n.trim() !== '') : [];
+          }
+        }
+        return sanitized;
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  });
+
   // Available Classes list
   const [classesList, setClassesList] = useState<string[]>(() => {
-    // Get unique classes from resultsList, plus standard defaults
-    const list = new Set(["JHS 2 Gold", "Grade 10-A", "JHS 3 Diamond"]);
+    const list = new Set<string>();
+    if (propSelectedClass && propSelectedClass.trim() && !isMockClassName(propSelectedClass)) {
+      list.add(propSelectedClass.trim());
+    }
+    Object.keys(customRosters).forEach(cls => {
+      if (cls && cls.trim() && !isMockClassName(cls)) list.add(cls.trim());
+    });
     resultsList.forEach(r => {
-      if (r.className) list.add(r.className);
+      if (r.className && r.className.trim() && !isMockClassName(r.className)) list.add(r.className.trim());
     });
     return Array.from(list);
   });
 
-  const [selectedClass, setSelectedClass] = useState<string>("JHS 2 Gold");
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    if (propSelectedClass && propSelectedClass.trim() && !isMockClassName(propSelectedClass)) return propSelectedClass.trim();
+    return classesList[0] || "";
+  });
+
+  // Sync selectedClass if prop changes
+  useEffect(() => {
+    if (propSelectedClass && propSelectedClass.trim() && !isMockClassName(propSelectedClass) && propSelectedClass !== selectedClass) {
+      setSelectedClass(propSelectedClass);
+      setClassesList(prev => prev.includes(propSelectedClass) ? prev : [...prev, propSelectedClass]);
+    }
+  }, [propSelectedClass]);
+
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const today = new Date();
     return today.toISOString().split("T")[0];
@@ -81,80 +111,28 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
     const cached = localStorage.getItem("omr_attendance_records");
     if (cached) {
       try {
-        return JSON.parse(cached);
-      } catch (e) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(r => !isMockClassName(r.className));
+        }
+      } catch {
         return [];
       }
     }
-    
-    // Seed standard dummy history records for the default class
-    const seed: AttendanceRecord[] = [];
-    const JHS_2_Gold_Students = DEFAULT_ROSTERS["JHS 2 Gold"];
-    
-    // Generate past 5 school days
-    const today = new Date();
-    for (let i = 5; i >= 1; i--) {
-      const d = new Date();
-      d.setDate(today.getDate() - i);
-      const dayOfWeek = d.getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) continue; // skip weekends
-      
-      const dateStr = d.toISOString().split("T")[0];
-      const statuses: { [key: string]: "Present" | "Absent" | "Late" } = {};
-      
-      let pCount = 0;
-      let aCount = 0;
-      let lCount = 0;
-
-      JHS_2_Gold_Students.forEach((student, index) => {
-        // Random statuses with high present weight
-        let status: "Present" | "Absent" | "Late" = "Present";
-        const rand = Math.random();
-        if (rand < 0.1) {
-          status = "Absent";
-          aCount++;
-        } else if (rand < 0.22) {
-          status = "Late";
-          lCount++;
-        } else {
-          pCount++;
-        }
-        statuses[student] = status;
-      });
-
-      seed.push({
-        id: `att_jhs_2_gold_${dateStr}`,
-        date: dateStr,
-        className: "JHS 2 Gold",
-        totalCount: JHS_2_Gold_Students.length,
-        presentCount: pCount,
-        absentCount: aCount,
-        lateCount: lCount,
-        statuses
-      });
-    }
-
-    localStorage.setItem("omr_attendance_records", JSON.stringify(seed));
-    return seed;
-  });
-
-  // Load custom student rosters from localStorage if saved, or fallback to DEFAULT_ROSTERS
-  const [customRosters, setCustomRosters] = useState<{ [className: string]: string[] }>(() => {
-    const cached = localStorage.getItem("omr_custom_rosters");
-    if (cached) {
-      try {
-        return JSON.parse(cached);
-      } catch (e) {
-        return DEFAULT_ROSTERS;
-      }
-    }
-    return DEFAULT_ROSTERS;
+    return [];
   });
 
   // Synchronize current roster when class selection changes
   useEffect(() => {
-    const classRoster = customRosters[selectedClass] || DEFAULT_ROSTERS[selectedClass] || [];
+    if (!selectedClass) {
+      setRoster([]);
+      return;
+    }
+    const classRoster = customRosters[selectedClass] || [];
     setRoster(classRoster);
+    if (propSetSelectedClass && selectedClass) {
+      propSetSelectedClass(selectedClass);
+    }
   }, [selectedClass, customRosters]);
 
   // Keep custom rosters in sync with localStorage
@@ -172,6 +150,10 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
 
   // When date or class changes, look up existing daily record, or default everyone to Present
   useEffect(() => {
+    if (!selectedClass) {
+      setCurrentStatuses({});
+      return;
+    }
     const existing = historyRecords.find(
       r => r.className === selectedClass && r.date === selectedDate
     );
@@ -208,7 +190,11 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
   }, [roster, currentStatuses]);
 
   // Save/commit attendance sheet for the selected date and class
-  const handleSaveSheet = () => {
+  const handleSaveSheet = async () => {
+    if (!selectedClass) {
+      alert("Please select or create a class first.");
+      return;
+    }
     if (roster.length === 0) {
       alert("No students in active class roster to register.");
       return;
@@ -227,13 +213,29 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
       statuses: { ...currentStatuses }
     };
 
-    // Replace or insert
+    // Replace or insert in local history
     setHistoryRecords(prev => {
       const filtered = prev.filter(r => r.id !== recordId);
       return [newRecord, ...filtered];
     });
 
-    alert(`Daily Attendance Sheet for ${selectedClass} (${selectedDate}) has been saved securely to local cache!`);
+    // Sync to Supabase cloud table if connected
+    try {
+      await dbService.saveAttendanceRecord({
+        id: recordId,
+        date: selectedDate,
+        class_name: selectedClass,
+        total_count: roster.length,
+        present_count: gridStats.present,
+        absent_count: gridStats.absent,
+        late_count: gridStats.late,
+        statuses: currentStatuses,
+      });
+    } catch (err) {
+      console.warn("Could not sync attendance to Supabase cloud:", err);
+    }
+
+    alert(`Daily Attendance Sheet for ${selectedClass} (${selectedDate}) has been saved and synced!`);
   };
 
   // Mark all students in the roster
@@ -388,9 +390,13 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
               onChange={(e) => setSelectedClass(e.target.value)}
               className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-emerald-500 cursor-pointer"
             >
-              {classesList.map(c => (
-                <option key={c} value={c}>Class: {c}</option>
-              ))}
+              {classesList.length === 0 ? (
+                <option value="">No Class Selected</option>
+              ) : (
+                classesList.map(c => (
+                  <option key={c} value={c}>Class: {c}</option>
+                ))
+              )}
             </select>
           </div>
 
@@ -427,7 +433,7 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
               <div>
                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
                   <CalendarDays className="w-4 h-4 text-emerald-600" />
-                  <span>Register Sheet: {selectedClass}</span>
+                  <span>Register Sheet: {selectedClass || "No Class Selected"}</span>
                 </h2>
                 <p className="text-[11px] text-slate-400 font-medium">
                   Mark daily student presence for <span className="text-slate-800 font-bold">{selectedDate}</span>
@@ -438,13 +444,15 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => handleMarkAll("Present")}
-                  className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold border border-emerald-150 transition"
+                  disabled={!selectedClass || roster.length === 0}
+                  className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-800 rounded-lg text-[10px] font-bold border border-emerald-150 transition"
                 >
                   Mark All Present
                 </button>
                 <button
                   onClick={() => handleMarkAll("Absent")}
-                  className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-800 rounded-lg text-[10px] font-bold border border-red-150 transition"
+                  disabled={!selectedClass || roster.length === 0}
+                  className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-800 rounded-lg text-[10px] font-bold border border-red-150 transition"
                 >
                   Mark All Absent
                 </button>
@@ -494,12 +502,27 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
             </div>
 
             {/* Main Interactive Roll-call Sheet */}
-            {filteredRoster.length === 0 ? (
+            {!selectedClass ? (
               <div className="p-12 text-center space-y-3">
                 <Users className="w-10 h-10 text-slate-300 mx-auto" />
                 <div>
-                  <h4 className="text-xs font-bold text-slate-800">No students found</h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Add students using the roster manager or alter your search filters.</p>
+                  <h4 className="text-xs font-bold text-slate-800">No Class Selected</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Please add or select a class to view and record daily attendance.</p>
+                </div>
+                <button
+                  onClick={() => setShowAddClassModal(true)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Class</span>
+                </button>
+              </div>
+            ) : filteredRoster.length === 0 ? (
+              <div className="p-12 text-center space-y-3">
+                <Users className="w-10 h-10 text-slate-300 mx-auto" />
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800">No students in {selectedClass}</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Add students using the Quick Roster Manager below to start taking attendance.</p>
                 </div>
               </div>
             ) : (
@@ -617,7 +640,7 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
                 type="text"
                 value={newStudentName}
                 onChange={(e) => setNewStudentName(e.target.value)}
-                placeholder="Type new candidate's full name (e.g. Kofi Appiah)..."
+                placeholder="Enter candidate full name..."
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-semibold focus:outline-emerald-500 text-slate-800"
               />
               <button
@@ -650,31 +673,37 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
             </div>
 
             <div className="space-y-3 max-h-[320px] overflow-y-auto divide-y divide-slate-50">
-              {absenteeismSummary.map((student) => {
-                const isAlert = student.rate < 85;
+              {absenteeismSummary.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  No student records in this class roster yet.
+                </div>
+              ) : (
+                absenteeismSummary.map((student) => {
+                  const isAlert = student.rate < 85;
 
-                return (
-                  <div key={student.name} className="pt-2 pb-1.5 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-slate-800 block truncate max-w-[160px]">{student.name}</span>
-                      <span className="text-[9px] text-slate-400 font-mono">
-                        P: {student.present} • L: {student.late} • A: {student.absent}
-                      </span>
-                    </div>
-                    
-                    <div className="text-right">
-                      <span className={`font-mono font-black ${isAlert ? "text-red-600 font-bold" : "text-slate-700"}`}>
-                        {student.rate}%
-                      </span>
-                      {isAlert && (
-                        <span className="block text-[8px] font-black text-red-500 uppercase tracking-wider">
-                          Poor Attendance
+                  return (
+                    <div key={student.name} className="pt-2 pb-1.5 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-slate-800 block truncate max-w-[160px]">{student.name}</span>
+                        <span className="text-[9px] text-slate-400 font-mono">
+                          P: {student.present} • L: {student.late} • A: {student.absent}
                         </span>
-                      )}
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className={`font-mono font-black ${isAlert ? "text-red-600 font-bold" : "text-slate-700"}`}>
+                          {student.rate}%
+                        </span>
+                        {isAlert && (
+                          <span className="block text-[8px] font-black text-red-500 uppercase tracking-wider">
+                            Poor Attendance
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -784,7 +813,7 @@ export function AttendanceModule({ onBack, resultsList }: AttendanceModuleProps)
                   required
                   value={newClassNameInput}
                   onChange={(e) => setNewClassNameInput(e.target.value)}
-                  placeholder="e.g. JHS 1 Blue"
+                  placeholder="e.g. Basic 5, JHS 1, Form 2..."
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-emerald-500"
                 />
               </div>

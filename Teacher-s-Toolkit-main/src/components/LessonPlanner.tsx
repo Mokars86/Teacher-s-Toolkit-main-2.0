@@ -58,23 +58,24 @@ const GHANA_CURRICULUM_PRESETS: Omit<LessonPlan, 'id' | 'isCompleted'>[] = [
 export function LessonPlanner({ onBack }: LessonPlannerProps) {
   const [plans, setPlans] = useState<LessonPlan[]>(() => {
     const cached = localStorage.getItem("omr_lesson_plans");
-    if (cached) return JSON.parse(cached);
-    // Seed default presets with unique IDs
-    return GHANA_CURRICULUM_PRESETS.map((p, i) => ({
-      ...p,
-      id: `lesson_${Date.now()}_${i}`,
-      isCompleted: i === 0 // Mark first one as completed/approved
-    }));
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
   });
 
-  const [activePlanId, setActivePlanId] = useState<string>(plans[0]?.id || "");
+  const [activePlanId, setActivePlanId] = useState<string>(() => plans[0]?.id || "");
   const [isAddingNew, setIsAddingNew] = useState<boolean>(false);
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
 
   // Form State
   const [formWeek, setFormWeek] = useState<number>(1);
   const [formSubject, setFormSubject] = useState<string>("Mathematics");
-  const [formClass, setFormClass] = useState<string>("JHS 2 Gold");
+  const [formClass, setFormClass] = useState<string>("");
   const [formTopic, setFormTopic] = useState<string>("");
   const [formObjectives, setFormObjectives] = useState<string>("");
   const [formTlms, setFormTlms] = useState<string>("");

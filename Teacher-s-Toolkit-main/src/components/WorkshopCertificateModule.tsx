@@ -16,16 +16,16 @@ interface WorkshopCertificateModuleProps {
 
 export function WorkshopCertificateModule({ 
   onBack,
-  defaultTeacherName = "Teacher Sarah Jenkins",
-  defaultSchoolName = "St. Peter's Basic School",
+  defaultTeacherName = "",
+  defaultSchoolName = "",
 }: WorkshopCertificateModuleProps) {
-  const [recipientName, setRecipientName] = useState(defaultTeacherName);
-  const [schoolName, setSchoolName] = useState(defaultSchoolName);
+  const [recipientName, setRecipientName] = useState(defaultTeacherName || "Educator Name");
+  const [schoolName, setSchoolName] = useState(defaultSchoolName || "School / Institution");
   const [workshopTitle, setWorkshopTitle] = useState(
     "Digital Pedagogy, OMR Automated Assessment & AI Lesson Planning Masterclass"
   );
-  const [certificateId, setCertificateId] = useState("CERT-TT-2026-8921");
-  const [issueDate, setIssueDate] = useState("August 25, 2026");
+  const [certificateId, setCertificateId] = useState(`CERT-TT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [issueDate, setIssueDate] = useState(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
   const [cpdHours, setCpdHours] = useState("12 CPD Hours");
   const [facilitatorName, setFacilitatorName] = useState("Ing. Abubakar M. Karikari");
   const [facilitatorTitle, setFacilitatorTitle] = useState("Lead Trainer, Mokars Tech");

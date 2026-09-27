@@ -29,16 +29,6 @@ interface StudentOption {
   canteenPaid: number;
 }
 
-const INITIAL_STUDENTS: StudentOption[] = [
-  { id: "STU-001", name: "Kwesi Mensah", rollNo: "JHS2-001", className: "JHS 2 Gold", guardianName: "Esi Mensah", guardianPhone: "+233244123456", totalFeesTarget: 350, feesPaid: 300, ptaTarget: 50, ptaPaid: 50, canteenTarget: 100, canteenPaid: 80 },
-  { id: "STU-002", name: "Ama Osei-Bonsu", rollNo: "JHS2-002", className: "JHS 2 Gold", guardianName: "Kofi Osei", guardianPhone: "+233501987654", totalFeesTarget: 350, feesPaid: 350, ptaTarget: 50, ptaPaid: 50, canteenTarget: 100, canteenPaid: 100 },
-  { id: "STU-003", name: "Kofi Annan Jr.", rollNo: "JHS2-003", className: "JHS 2 Gold", guardianName: "Grace Annan", guardianPhone: "+233277334455", totalFeesTarget: 350, feesPaid: 150, ptaTarget: 50, ptaPaid: 0, canteenTarget: 100, canteenPaid: 40 },
-  { id: "STU-004", name: "Abena Appiah", rollNo: "JHS2-004", className: "JHS 2 Gold", guardianName: "Samuel Appiah", guardianPhone: "+233544889900", totalFeesTarget: 350, feesPaid: 0, ptaTarget: 50, ptaPaid: 0, canteenTarget: 100, canteenPaid: 0 },
-  { id: "STU-005", name: "Yaw Dankwa", rollNo: "JHS2-005", className: "JHS 2 Gold", guardianName: "Akosua Dankwa", guardianPhone: "+233200112233", totalFeesTarget: 350, feesPaid: 200, ptaTarget: 50, ptaPaid: 25, canteenTarget: 100, canteenPaid: 50 },
-  { id: "STU-006", name: "Efua Kyei", rollNo: "JHS1-012", className: "JHS 1 Emerald", guardianName: "Joseph Kyei", guardianPhone: "+233243990011", totalFeesTarget: 320, feesPaid: 320, ptaTarget: 50, ptaPaid: 50, canteenTarget: 100, canteenPaid: 90 },
-  { id: "STU-007", name: "Kojo Adjei", rollNo: "P6-008", className: "Primary 6 Ruby", guardianName: "Mary Adjei", guardianPhone: "+233555223344", totalFeesTarget: 280, feesPaid: 180, ptaTarget: 40, ptaPaid: 40, canteenTarget: 80, canteenPaid: 40 },
-];
-
 export function SchoolCollectionsHub({ 
   onBack, 
   schoolProfile, 
@@ -46,11 +36,21 @@ export function SchoolCollectionsHub({
   setSelectedClass 
 }: SchoolCollectionsHubProps) {
   const [activeCategory, setActiveCategory] = useState<PaymentCategory>("school_fees");
-  const [students, setStudents] = useState<StudentOption[]>(INITIAL_STUDENTS);
+  const [students, setStudents] = useState<StudentOption[]>(() => {
+    const cached = localStorage.getItem("school_collections_students");
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
 
   // Form state
   const [studentSearch, setStudentSearch] = useState<string>("");
-  const [selectedStudent, setSelectedStudent] = useState<StudentOption | null>(INITIAL_STUDENTS[0]);
+  const [selectedStudent, setSelectedStudent] = useState<StudentOption | null>(() => students[0] || null);
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
   const [amountPaid, setAmountPaid] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -67,7 +67,18 @@ export function SchoolCollectionsHub({
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState<boolean>(false);
   const [copiedDraft, setCopiedDraft] = useState<boolean>(false);
 
-  const classList = ["JHS 2 Gold", "JHS 1 Emerald", "Primary 6 Ruby", "School-Wide Ledger"];
+  const classList = useMemo(() => {
+    const fromStudents = students.map(s => s.className).filter(Boolean);
+    let fromRosters: string[] = [];
+    try {
+      const cached = localStorage.getItem("omr_custom_rosters");
+      if (cached) {
+        fromRosters = Object.keys(JSON.parse(cached));
+      }
+    } catch {}
+    const combined = Array.from(new Set(["School-Wide Ledger", ...fromStudents, ...fromRosters, selectedClass].filter(Boolean)));
+    return combined;
+  }, [students, selectedClass]);
 
   const filteredSearchStudents = useMemo(() => {
     return students.filter(s => {
@@ -684,8 +695,8 @@ export function SchoolCollectionsHub({
             {/* A6 Printable Receipt Card */}
             <div id="printable-receipt" className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 font-mono text-xs text-slate-800 dark:text-slate-300">
               <div className="text-center border-b border-slate-200 dark:border-slate-800 pb-3 space-y-1">
-                <div className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">{schoolProfile?.name || "St. Peter's Basic School"}</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">{schoolProfile?.address || "Osu, Accra, Ghana"}</div>
+                <div className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">{schoolProfile?.name || "School Administration"}</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">{schoolProfile?.address || "Digital Receipt Voucher"}</div>
                 <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">OFFICIAL DIGITAL RECEIPT</div>
                 <div className="text-[10px] text-slate-400">No: {lastRecordedReceipt.receiptNumber}</div>
               </div>

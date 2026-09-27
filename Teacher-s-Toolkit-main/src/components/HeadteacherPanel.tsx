@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Building2, Users, CheckCircle2, AlertCircle, Clock, FileText, 
   Search, Check, X, ShieldCheck, Lock, RotateCcw, Edit3, MessageSquare, 
@@ -9,10 +9,10 @@ import {
 import { 
   SchoolProfile, ClassSubmission, SubmissionStatus, TeacherJoinRequest, PresetRemark, GradedResult, UserProfile 
 } from '../types';
-import { 
-  LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode,
+import { LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode,
   getReferralLink, REDEEM_POINT_COSTS, REFERRAL_REWARDS, redeemPointsForPlan
 } from '../services/subscriptionService';
+import { QuestionBankModule } from './QuestionBankModule';
 // @ts-ignore
 import appLogo from '../assets/images/app_logo.png';
 
@@ -34,91 +34,17 @@ interface HeadteacherPanelProps {
 
 // Initial mock dataset for school admin
 const INITIAL_SCHOOL_PROFILE: SchoolProfile = {
-  id: "SCH_001",
-  name: "St. Peter's Basic School",
-  code: "SCH-GH-8821",
-  region: "Greater Accra Region",
-  address: "P.O. Box 42, Osu, Accra - Ghana",
-  motto: "Excellence and Integrity in Knowledge",
-  headteacherName: "Rev. Dr. Emmanuel Mensah",
-  academicTerm: "Term 2 - 2025/2026 Academic Year",
-  totalStudents: 480,
-  totalTeachers: 18,
+  id: "",
+  name: "",
+  code: "",
+  region: "",
+  address: "",
+  motto: "",
+  headteacherName: "",
+  academicTerm: "",
+  totalStudents: 0,
+  totalTeachers: 0,
 };
-
-const INITIAL_SUBMISSIONS: ClassSubmission[] = [
-  {
-    id: "sub_jhs2",
-    className: "JHS 2 Gold",
-    teacherName: "Mr. John Teacher",
-    teacherId: "teach_01",
-    totalStudents: 25,
-    completedReportsCount: 25,
-    status: "submitted",
-    submittedAt: "2026-07-22 08:30 AM",
-  },
-  {
-    id: "sub_p5",
-    className: "Primary 5 Emerald",
-    teacherName: "Mrs. Sarah Appiah",
-    teacherId: "teach_02",
-    totalStudents: 30,
-    completedReportsCount: 30,
-    status: "approved",
-    submittedAt: "2026-07-20 02:15 PM",
-    approvedAt: "2026-07-21 09:00 AM",
-  },
-  {
-    id: "sub_shs1",
-    className: "SHS 1 General Arts",
-    teacherName: "Mr. Kwame Boateng",
-    teacherId: "teach_03",
-    totalStudents: 28,
-    completedReportsCount: 18,
-    status: "in_progress",
-  },
-  {
-    id: "sub_jhs3",
-    className: "JHS 3 Blue",
-    teacherName: "Ms. Patricia Osei",
-    teacherId: "teach_04",
-    totalStudents: 26,
-    completedReportsCount: 26,
-    status: "revision_requested",
-    submittedAt: "2026-07-21 11:45 AM",
-    revisionNotes: "Please re-verify Mathematics score for Candidate #004 (Grace Mensah) before final lock.",
-  },
-  {
-    id: "sub_p4",
-    className: "Primary 4 Ruby",
-    teacherName: "Mr. Ebenezer Laryea",
-    teacherId: "teach_05",
-    totalStudents: 22,
-    completedReportsCount: 0,
-    status: "not_started",
-  }
-];
-
-const INITIAL_PENDING_TEACHERS: TeacherJoinRequest[] = [
-  {
-    id: "req_01",
-    teacherName: "Daniel K. Ansah",
-    email: "daniel.ansah@stpeters.edu.gh",
-    assignedClass: "JHS 1 Diamond",
-    subject: "Integrated Science",
-    requestedAt: "Today at 07:15 AM",
-    status: "pending",
-  },
-  {
-    id: "req_02",
-    teacherName: "Abena Serwaa",
-    email: "abena.serwaa@stpeters.edu.gh",
-    assignedClass: "Primary 3 Sapphire",
-    subject: "English Language",
-    requestedAt: "Yesterday at 04:30 PM",
-    status: "pending",
-  }
-];
 
 const INITIAL_PRESET_REMARKS: PresetRemark[] = [
   {
@@ -190,55 +116,6 @@ interface TeacherCollectionSubmission {
   receiptRef: string;
 }
 
-const INITIAL_TEACHER_COLLECTIONS: TeacherCollectionSubmission[] = [
-  {
-    id: "col_jhs2",
-    teacherName: "Mr. John Teacher",
-    className: "JHS 2 Gold",
-    canteenAmount: 140,
-    ptaAmount: 450,
-    schoolFeesAmount: 3800,
-    submittedAt: "29 Aug 2026, 08:45 AM",
-    status: "pending",
-    receiptRef: "REC-2026-081"
-  },
-  {
-    id: "col_p5",
-    teacherName: "Mrs. Sarah Appiah",
-    className: "Primary 5 Emerald",
-    canteenAmount: 160,
-    ptaAmount: 600,
-    schoolFeesAmount: 4500,
-    submittedAt: "28 Aug 2026, 04:15 PM",
-    verifiedAt: "28 Aug 2026, 04:30 PM",
-    status: "verified",
-    receiptRef: "REC-2026-080"
-  },
-  {
-    id: "col_shs1",
-    teacherName: "Mr. Kwame Boateng",
-    className: "SHS 1 General Arts",
-    canteenAmount: 95,
-    ptaAmount: 350,
-    schoolFeesAmount: 2900,
-    submittedAt: "29 Aug 2026, 09:10 AM",
-    status: "pending",
-    receiptRef: "REC-2026-082"
-  },
-  {
-    id: "col_jhs3",
-    teacherName: "Ms. Patricia Osei",
-    className: "JHS 3 Blue",
-    canteenAmount: 110,
-    ptaAmount: 550,
-    schoolFeesAmount: 4800,
-    submittedAt: "21 Jul 2026, 03:30 PM",
-    verifiedAt: "21 Jul 2026, 04:00 PM",
-    status: "verified",
-    receiptRef: "REC-2026-078"
-  }
-];
-
 export function HeadteacherPanel({ 
   onBack, 
   resultsList = [],
@@ -254,12 +131,21 @@ export function HeadteacherPanel({
   isDarkMode = false,
   onToggleDarkMode,
 }: HeadteacherPanelProps) {
-  const [activeTab, setActiveTab] = useState<"matrix" | "broadsheet" | "remarks" | "teachers" | "settings">("matrix");
-  const [submissions, setSubmissions] = useState<ClassSubmission[]>(INITIAL_SUBMISSIONS);
-  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>("sub_jhs2");
-  const [pendingTeachers, setPendingTeachers] = useState<TeacherJoinRequest[]>(INITIAL_PENDING_TEACHERS);
+  const [activeTab, setActiveTab] = useState<"matrix" | "broadsheet" | "remarks" | "teachers" | "settings" | "question_bank">("matrix");
+  const [submissions, setSubmissions] = useState<ClassSubmission[]>(() => {
+    const cached = localStorage.getItem("ht_submissions");
+    return cached ? JSON.parse(cached) : [];
+  });
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>(() => submissions[0]?.id || "");
+  const [pendingTeachers, setPendingTeachers] = useState<TeacherJoinRequest[]>(() => {
+    const cached = localStorage.getItem("ht_pending_teachers");
+    return cached ? JSON.parse(cached) : [];
+  });
   const [presetRemarks, setPresetRemarks] = useState<PresetRemark[]>(INITIAL_PRESET_REMARKS);
-  const [teacherCollections, setTeacherCollections] = useState<TeacherCollectionSubmission[]>(INITIAL_TEACHER_COLLECTIONS);
+  const [teacherCollections, setTeacherCollections] = useState<TeacherCollectionSubmission[]>(() => {
+    const cached = localStorage.getItem("ht_collections");
+    return cached ? JSON.parse(cached) : [];
+  });
   const [selectedHandoverForPrint, setSelectedHandoverForPrint] = useState<TeacherCollectionSubmission | null>(null);
   const [showFullHandoverStatementModal, setShowFullHandoverStatementModal] = useState<boolean>(false);
   const [activeLedgerCategoryModal, setActiveLedgerCategoryModal] = useState<"canteen" | "pta" | "fees" | null>(null);
@@ -344,17 +230,44 @@ export function HeadteacherPanel({
   // QR / Code Modal
   const [showSchoolCodeModal, setShowSchoolCodeModal] = useState(false);
 
-  const defaultSubmission: ClassSubmission = {
-    id: "sub_default",
-    className: "JHS 2 Gold",
-    teacherName: "Mr. John Teacher",
-    teacherId: "teach_01",
-    totalStudents: 25,
-    completedReportsCount: 25,
-    status: "submitted",
-    submittedAt: "2026-07-22 08:30 AM",
-  };
-  const selectedSubmission = submissions.find(s => s.id === selectedSubmissionId) || submissions[0] || defaultSubmission;
+  const selectedSubmission: ClassSubmission = submissions.find(s => s.id === selectedSubmissionId) || submissions[0] || (
+    resultsList && resultsList.length > 0 ? {
+      id: "sub_live_active",
+      className: resultsList[0]?.className || "Active Class",
+      teacherName: userProfile?.fullName || "Class Teacher",
+      teacherId: "teach_live",
+      totalStudents: resultsList.length,
+      completedReportsCount: resultsList.length,
+      status: "submitted" as SubmissionStatus,
+      submittedAt: resultsList[0]?.scannedAt || new Date().toLocaleDateString('en-GB')
+    } : {
+      id: "",
+      className: "All Classes",
+      teacherName: userProfile?.fullName || "Class Teacher",
+      teacherId: "",
+      totalStudents: 0,
+      completedReportsCount: 0,
+      status: "draft" as SubmissionStatus,
+      submittedAt: ""
+    }
+  );
+
+  // Dynamically compute real unique classes and enrolled students count from live data
+  const totalClassesCount = useMemo(() => {
+    const fromResults = (resultsList || []).map(r => r.className).filter(Boolean);
+    const fromSubmissions = submissions.map(s => s.className).filter(Boolean);
+    const combined = new Set([...fromResults, ...fromSubmissions]);
+    return combined.size;
+  }, [resultsList, submissions]);
+
+  const totalEnrolledStudents = useMemo(() => {
+    if (currentSchool.totalStudents && currentSchool.totalStudents > 0) {
+      return currentSchool.totalStudents;
+    }
+    const uniqueStudents = new Set((resultsList || []).map(r => r.candidateName || r.candidateId).filter(Boolean));
+    if (uniqueStudents.size > 0) return uniqueStudents.size;
+    return submissions.reduce((sum, s) => sum + (s.totalStudents || 0), 0);
+  }, [currentSchool.totalStudents, resultsList, submissions]);
 
   // Actions for Headteacher
   const handleApproveClass = (id: string) => {
@@ -636,16 +549,22 @@ export function HeadteacherPanel({
 
               <button
                 id="tab_head_question_bank"
-                onClick={() => {
-                  if (onOpenQuestionBank) onOpenQuestionBank();
-                }}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-xs transition text-slate-600 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer group"
+                onClick={() => setActiveTab("question_bank")}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer group ${
+                  activeTab === "question_bank"
+                    ? "bg-emerald-600 text-white shadow-md"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
               >
                 <div className="flex items-center gap-3">
-                  <BookOpen className="w-4 h-4 text-emerald-500 shrink-0 group-hover:scale-110 transition-transform" />
+                  <BookOpen className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${activeTab === "question_bank" ? "text-white" : "text-emerald-500"}`} />
                   <span>WAEC Question Bank</span>
                 </div>
-                <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[9px] font-extrabold border border-emerald-300 dark:border-emerald-700">
+                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold border ${
+                  activeTab === "question_bank"
+                    ? "bg-emerald-700 text-emerald-100 border-emerald-500"
+                    : "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
+                }`}>
                   +30 Pts
                 </span>
               </button>
@@ -723,8 +642,12 @@ export function HeadteacherPanel({
                   </div>
                 </div>
                 <div className="mt-2 space-y-0.5">
-                  <span className="text-xl sm:text-2xl font-black font-mono text-slate-900 dark:text-white block">6 Classes</span>
-                  <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold block">{currentSchool.totalStudents} Enrolled Students</span>
+                  <span className="text-xl sm:text-2xl font-black font-mono text-slate-900 dark:text-white block">
+                    {totalClassesCount} {totalClassesCount === 1 ? "Class" : "Classes"}
+                  </span>
+                  <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold block">
+                    {totalEnrolledStudents} Enrolled {totalEnrolledStudents === 1 ? "Student" : "Students"}
+                  </span>
                 </div>
               </div>
 
@@ -783,9 +706,7 @@ export function HeadteacherPanel({
             {/* WAEC Question Bank & Points Rewards Feature Card for Headteacher */}
             <div
               id="headteacher_card_question_bank"
-              onClick={() => {
-                if (onOpenQuestionBank) onOpenQuestionBank();
-              }}
+              onClick={() => setActiveTab("question_bank")}
               className="bg-gradient-to-br from-emerald-500/10 via-white to-teal-500/10 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 p-4 sm:p-5 rounded-2xl shadow-sm hover:shadow-xl border border-emerald-300 dark:border-emerald-500/40 relative overflow-hidden group transition-all duration-300 text-left cursor-pointer hover:scale-[1.01] ring-2 ring-transparent hover:ring-emerald-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5"
             >
               <div className="flex items-center gap-3.5 min-w-0">
@@ -949,7 +870,18 @@ export function HeadteacherPanel({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                      {teacherCollections.map((col) => {
+                      {teacherCollections.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-slate-400">
+                            <CreditCard className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-700 mb-2" />
+                            <p className="font-bold text-xs text-slate-600 dark:text-slate-300">No Cash Hand-Overs Recorded Yet</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              When class teachers collect canteen fees, PTA contributions, or school fees, payment receipts and hand-over batches will appear here for audit and verification.
+                            </p>
+                          </td>
+                        </tr>
+                      ) : (
+                        teacherCollections.map((col) => {
                         const totalCash = col.canteenAmount + col.ptaAmount + col.schoolFeesAmount;
                         const isVerified = col.status === "verified";
 
@@ -997,7 +929,7 @@ export function HeadteacherPanel({
                             </td>
                           </tr>
                         );
-                      })}
+                      }))}
                     </tbody>
                   </table>
                 </div>
@@ -1020,7 +952,28 @@ export function HeadteacherPanel({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4.5">
-                {submissions.map((sub) => {
+                {submissions.length === 0 ? (
+                  <div className="col-span-full p-8 text-center bg-slate-50/50 dark:bg-slate-900/50 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
+                    <Building2 className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700" />
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300">No Class Submissions Awaiting Approval</h4>
+                      <p className="text-xs text-slate-400 max-w-md mx-auto">
+                        When teachers compile their marks or submit continuous assessment broadsheets, their classes will appear here for headteacher review, audit, and digital sign-off.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowSchoolCodeModal(true)}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Share School Code with Teachers</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  submissions.map((sub) => {
                   const progressPct = Math.round((sub.completedReportsCount / sub.totalStudents) * 100);
                   const isApproved = sub.status === "approved";
                   const isSubmitted = sub.status === "submitted";
@@ -1124,7 +1077,7 @@ export function HeadteacherPanel({
                       </div>
                     </div>
                   );
-                })}
+                }))}
               </div>
             </div>
 
@@ -1207,28 +1160,62 @@ export function HeadteacherPanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {[
-                      { id: "STUD_001", name: "John Doe", omr: 42, ca: 26, att: 19, total: 87, grade: "A1", remark: "Outstanding performance!" },
-                      { id: "STUD_002", name: "Alice Johnson", omr: 46, ca: 28, att: 20, total: 94, grade: "A1", remark: "Exemplary standard." },
-                      { id: "STUD_003", name: "Michael Ampofo", omr: 32, ca: 22, att: 18, total: 72, grade: "B3", remark: "Good academic standing." },
-                      { id: "STUD_004", name: "Grace Mensah", omr: 28, ca: 20, att: 16, total: 64, grade: "C4", remark: "Satisfactory, keep striving." },
-                      { id: "STUD_005", name: "David Osei", omr: 22, ca: 16, att: 14, total: 52, grade: "C6", remark: "Passable. Consistent revision needed." },
-                    ].map((row, i) => (
-                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-850">
-                        <td className="py-3 px-2 font-mono font-bold text-slate-500">{row.id}</td>
-                        <td className="py-3 px-2 font-bold text-slate-900 dark:text-white">{row.name}</td>
-                        <td className="py-3 px-2 text-center font-mono">{row.omr}</td>
-                        <td className="py-3 px-2 text-center font-mono">{row.ca}</td>
-                        <td className="py-3 px-2 text-center font-mono">{row.att}</td>
-                        <td className="py-3 px-2 text-center font-mono font-black text-slate-900 dark:text-white">{row.total}%</td>
-                        <td className="py-3 px-2 text-center">
-                          <span className="px-2 py-0.5 rounded font-black font-mono text-[10px] bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200">
-                            {row.grade}
-                          </span>
-                        </td>
-                        <td className="py-3 px-2 text-slate-600 dark:text-slate-300 font-medium italic">{row.remark}</td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      const relevantResults = (resultsList || []).filter(r => 
+                        !selectedSubmission?.className || 
+                        selectedSubmission.className === "All Classes" || 
+                        selectedSubmission.className === "No Active Class" || 
+                        r.className === selectedSubmission.className
+                      );
+                      const activeResults = relevantResults.length > 0 ? relevantResults : (resultsList || []);
+
+                      if (activeResults.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={8} className="py-12 text-center text-slate-400">
+                              <FileText className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-700 mb-2" />
+                              <p className="font-bold text-xs text-slate-700 dark:text-slate-300">No Assessment Records Found</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                When students' OMR sheets are graded for {selectedSubmission.className || 'this class'}, consolidated scores and Stanine grades will automatically appear here.
+                              </p>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return activeResults.map((r, i) => {
+                        const percentage = r.percentage || 0;
+                        const grade = percentage >= 80 ? 'A1' :
+                                      percentage >= 70 ? 'B2' :
+                                      percentage >= 65 ? 'B3' :
+                                      percentage >= 60 ? 'C4' :
+                                      percentage >= 55 ? 'C5' :
+                                      percentage >= 50 ? 'C6' :
+                                      percentage >= 45 ? 'D7' :
+                                      percentage >= 40 ? 'E8' : 'F9';
+                        const matchingRemark = presetRemarks.find(p => p.gradeTier === grade)?.headComment || 'Good academic standing.';
+                        const omrScaled = Math.round((percentage / 100) * 50);
+                        const classwork = Math.min(30, Math.round(omrScaled * 0.6));
+                        const attendance = 20;
+
+                        return (
+                          <tr key={r.id || i} className="hover:bg-slate-50 dark:hover:bg-slate-850">
+                            <td className="py-3 px-2 font-mono font-bold text-slate-500">{r.candidateId || `STUD_${String(i + 1).padStart(3, '0')}`}</td>
+                            <td className="py-3 px-2 font-bold text-slate-900 dark:text-white">{r.candidateName || `Candidate #${i + 1}`}</td>
+                            <td className="py-3 px-2 text-center font-mono">{omrScaled}</td>
+                            <td className="py-3 px-2 text-center font-mono">{classwork}</td>
+                            <td className="py-3 px-2 text-center font-mono">{attendance}</td>
+                            <td className="py-3 px-2 text-center font-mono font-black text-slate-900 dark:text-white">{percentage}%</td>
+                            <td className="py-3 px-2 text-center">
+                              <span className="px-2 py-0.5 rounded font-black font-mono text-[10px] bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200">
+                                {grade}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 text-slate-600 dark:text-slate-300 font-medium italic">{matchingRemark}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -1375,7 +1362,18 @@ export function HeadteacherPanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {submissions.map((s, idx) => (
+                    {submissions.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                          <Users className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-700 mb-2" />
+                          <p className="font-bold text-xs text-slate-700 dark:text-slate-300">No Teaching Staff Connected Yet</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Share your school connection code <strong className="font-mono text-emerald-600 dark:text-emerald-400">{currentSchool.code || 'SCH-CODE'}</strong> with teachers so they can link their devices and submit broadsheets.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      submissions.map((s, idx) => (
                       <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-850">
                         <td className="py-3 px-2 font-bold text-slate-900 dark:text-white">{s.teacherName}</td>
                         <td className="py-3 px-2 font-mono font-semibold text-emerald-600">{s.className}</td>
@@ -1395,7 +1393,7 @@ export function HeadteacherPanel({
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
@@ -1887,6 +1885,48 @@ export function HeadteacherPanel({
                 <span>Sign Out Headteacher</span>
               </button>
             </div>
+          </div>
+        )}
+
+        {/* TAB: WAEC QUESTION BANK (INTEGRATED FOR HEADTEACHER) */}
+        {activeTab === "question_bank" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-3.5 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("matrix")}
+                  className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                  title="Return to Overview Matrix"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">Back to Overview</span>
+                </button>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-emerald-600" />
+                    <span>School WAEC Question Repository</span>
+                  </h3>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400">
+                    Contribute past questions to earn points for {currentSchool.name || "your school"} and access BECE & WASSCE question bank.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <QuestionBankModule
+              onBack={() => setActiveTab("matrix")}
+              userProfile={userProfile || {
+                fullName: currentSchool.headteacherName || "Headteacher",
+                email: "",
+                school: currentSchool.name || "School",
+                role: "headteacher",
+                rewardPoints: 100,
+                activeSubscriptionPlan: "School License",
+                isPremium: true
+              }}
+              setUserProfile={setUserProfile || (() => {})}
+            />
           </div>
         )}
 

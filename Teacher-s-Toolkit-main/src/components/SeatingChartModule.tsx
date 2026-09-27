@@ -20,56 +20,59 @@ interface StudentSeat {
   seatKey: string; // `${deskIndex}_${slotIndex}`
 }
 
-// Default roster of Ghanaian students for classroom seating presets
-const INITIAL_STUDENTS = [
-  { id: "STUD_001", name: "John Doe", className: "JHS 2 Gold", specialNeeds: "Needs Front Desk (Vision)" },
-  { id: "STUD_002", name: "Alice Johnson", className: "JHS 2 Gold", specialNeeds: "Left-handed" },
-  { id: "STUD_003", name: "Michael Ampofo", className: "JHS 2 Gold" },
-  { id: "STUD_004", name: "Grace Mensah", className: "JHS 2 Gold" },
-  { id: "STUD_005", name: "David Osei", className: "JHS 2 Gold", specialNeeds: "Needs Front Desk (Attention)" },
-  { id: "STUD_006", name: "Emmanuel Kwarteng", className: "JHS 2 Gold" },
-  { id: "STUD_007", name: "Fatima Ibrahim", className: "JHS 2 Gold" },
-  { id: "STUD_008", name: "Kofi Owusu", className: "JHS 2 Gold" },
-  { id: "STUD_009", name: "Ama Serwaa", className: "JHS 2 Gold" },
-  { id: "STUD_010", name: "Kwaku Bonsu", className: "JHS 2 Gold" },
-  { id: "STUD_011", name: "Abena Appiah", className: "JHS 2 Gold" },
-  { id: "STUD_012", name: "Samuel Addo", className: "JHS 2 Gold" },
-  { id: "STUD_013", name: "Yaa Asantewaa", className: "JHS 2 Gold" },
-  { id: "STUD_014", name: "Kwame Nkrumah", className: "JHS 2 Gold" },
-  { id: "STUD_015", name: "Akua Donkor", className: "JHS 2 Gold" },
-  { id: "STUD_016", name: "Gideon Agyeman", className: "JHS 2 Gold" },
-  { id: "STUD_017", name: "Ebenezer Laryea", className: "JHS 2 Gold" },
-  { id: "STUD_018", name: "Priscilla Tetteh", className: "JHS 2 Gold" },
-  { id: "STUD_019", name: "Daniel Boateng", className: "JHS 2 Gold" },
-  { id: "STUD_020", name: "Bernice Ansah", className: "JHS 2 Gold" },
-];
-
 export function SeatingChartModule({ onBack, resultsList }: SeatingChartModuleProps) {
-  const [selectedClass, setSelectedClass] = useState<string>("JHS 2 Gold");
-  const [gridColumns, setGridColumns] = useState<number>(4);
-  const [gridRows, setGridRows] = useState<number>(3);
-  const [deskCapacity, setDeskCapacity] = useState<number>(2); // 1 = Single Desk, 2 = Dual Desk, 3 = Triple Desk
-  const [layoutMode, setLayoutMode] = useState<"standard" | "exam" | "pods">("standard");
-  const [selectedSeatKey, setSelectedSeatKey] = useState<string | null>(null);
-
-  // Combine static initial roster with dynamic students scanned from OMR results
+  // Combine custom saved roster with dynamic students scanned from OMR results
   const fullRoster = useMemo(() => {
     const map = new Map<string, { id: string; name: string; className: string; specialNeeds?: string }>();
     
-    INITIAL_STUDENTS.forEach(s => map.set(s.id, s));
+    try {
+      const custom = localStorage.getItem("omr_custom_rosters");
+      if (custom) {
+        const parsed = JSON.parse(custom);
+        Object.keys(parsed).forEach(cls => {
+          parsed[cls].forEach((name: string, i: number) => {
+            const id = `STUD_${cls}_${i}`;
+            map.set(id, { id, name, className: cls });
+          });
+        });
+      }
+    } catch {}
 
     resultsList.forEach(r => {
       if (r.candidateName && !map.has(r.candidateId)) {
         map.set(r.candidateId, {
           id: r.candidateId,
           name: r.candidateName,
-          className: r.className || "JHS 2 Gold",
+          className: r.className || "Class",
         });
       }
     });
 
     return Array.from(map.values());
   }, [resultsList]);
+
+  const classList = useMemo(() => {
+    const fromRoster = fullRoster.map(s => s.className).filter(Boolean);
+    let fromStorage: string[] = [];
+    try {
+      const custom = localStorage.getItem("omr_custom_rosters");
+      if (custom) {
+        fromStorage = Object.keys(JSON.parse(custom));
+      }
+    } catch {}
+    const defaultClasses = ["Primary 1", "Primary 2", "Primary 3", "Primary 4", "Primary 5", "Primary 6", "JHS 1", "JHS 2", "JHS 3", "SHS 1", "SHS 2", "SHS 3"];
+    const combined = Array.from(new Set([...fromRoster, ...fromStorage, ...defaultClasses].filter(Boolean)));
+    return combined;
+  }, [fullRoster]);
+
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    return fullRoster[0]?.className || "All Classes";
+  });
+  const [gridColumns, setGridColumns] = useState<number>(4);
+  const [gridRows, setGridRows] = useState<number>(3);
+  const [deskCapacity, setDeskCapacity] = useState<number>(2); // 1 = Single Desk, 2 = Dual Desk, 3 = Triple Desk
+  const [layoutMode, setLayoutMode] = useState<"standard" | "exam" | "pods">("standard");
+  const [selectedSeatKey, setSelectedSeatKey] = useState<string | null>(null);
 
   // Filter roster by selected class
   const classRoster = useMemo(() => {
@@ -78,20 +81,7 @@ export function SeatingChartModule({ onBack, resultsList }: SeatingChartModulePr
 
   // Map of seatKey `${deskIndex}_${slotIndex}` -> StudentSeat object assigned to that desk slot
   const [seatingAssignments, setSeatingAssignments] = useState<{ [seatKey: string]: StudentSeat }>(() => {
-    const initialMap: { [seatKey: string]: StudentSeat } = {};
-    // Default initial seating into dual desks (2 seats per desk)
-    INITIAL_STUDENTS.slice(0, 20).forEach((st, idx) => {
-      const deskIndex = Math.floor(idx / 2);
-      const slotIndex = idx % 2;
-      const key = `${deskIndex}_${slotIndex}`;
-      initialMap[key] = {
-        ...st,
-        deskIndex,
-        slotIndex,
-        seatKey: key,
-      };
-    });
-    return initialMap;
+    return {};
   });
 
   const totalDesks = gridColumns * gridRows;
@@ -247,10 +237,10 @@ export function SeatingChartModule({ onBack, resultsList }: SeatingChartModulePr
                   onChange={(e) => setSelectedClass(e.target.value)}
                   className="px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold focus:outline-emerald-500"
                 >
-                  <option value="JHS 2 Gold">JHS 2 Gold</option>
-                  <option value="Primary 5 Emerald">Primary 5 Emerald</option>
-                  <option value="SHS 1 General Arts">SHS 1 General Arts</option>
                   <option value="All Classes">All Classes</option>
+                  {classList.map(cls => (
+                    <option key={cls} value={cls}>{cls}</option>
+                  ))}
                 </select>
               </div>
 
@@ -504,7 +494,14 @@ export function SeatingChartModule({ onBack, resultsList }: SeatingChartModulePr
             </div>
 
             <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-              {classRoster.map((st) => {
+              {classRoster.length === 0 ? (
+                <div className="text-center py-8 px-4 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
+                  <Users className="w-6 h-6 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold text-slate-500">No students found for this class</p>
+                  <p className="text-[10px] text-slate-400">Scan student OMR answer sheets or configure custom rosters on the dashboard to populate seats.</p>
+                </div>
+              ) : (
+                classRoster.map((st) => {
                 const assignedSeatKey = Object.keys(seatingAssignments).find(
                   k => seatingAssignments[k]?.id === st.id
                 );
@@ -551,7 +548,8 @@ export function SeatingChartModule({ onBack, resultsList }: SeatingChartModulePr
                     </div>
                   </button>
                 );
-              })}
+              })
+              )}
             </div>
           </div>
 

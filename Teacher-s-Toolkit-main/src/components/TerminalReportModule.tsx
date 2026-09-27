@@ -262,7 +262,7 @@ interface TerminalReportModuleProps {
 
 export function TerminalReportModule({ 
   onBack, 
-  resultsList,
+  resultsList = [],
   activeSchoolMode = "personal",
   linkedSchool = null
 }: TerminalReportModuleProps) {
@@ -274,9 +274,31 @@ export function TerminalReportModule({
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [isSubmittedToHead, setIsSubmittedToHead] = useState<boolean>(false);
-  
+
+  // Dynamic Classes List
+  const availableClasses = useMemo(() => {
+    let list: string[] = [];
+    try {
+      const cached = localStorage.getItem("omr_custom_rosters");
+      if (cached) {
+        list = Object.keys(JSON.parse(cached));
+      }
+    } catch {}
+
+    (resultsList || []).forEach(r => {
+      if (r.className && !list.includes(r.className)) {
+        list.push(r.className);
+      }
+    });
+
+    const defaultClasses = ["Primary 1", "Primary 2", "Primary 3", "Primary 4", "Primary 5", "Primary 6", "JHS 1", "JHS 2", "JHS 3", "SHS 1", "SHS 2", "SHS 3"];
+    return Array.from(new Set([...list, ...defaultClasses]));
+  }, [resultsList]);
+
   // State for Class & Term Parameters
-  const [selectedClass, setSelectedClass] = useState<string>("JHS 2 Gold");
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    return availableClasses[0] || "JHS 1";
+  });
   const [currentTerm, setCurrentTerm] = useState<string>("Term 3, 2026");
   const [totalDays, setTotalDays] = useState<number>(90);
   const [nextTermDate, setNextTermDate] = useState<string>("2026-09-15");
@@ -410,8 +432,8 @@ export function TerminalReportModule({
   // Initialize roster based on class and existing graded results
   useEffect(() => {
     // Filter standard OMR results that belong to the current class
-    const classResults = resultsList.filter(
-      r => r.className.toLowerCase() === selectedClass.toLowerCase()
+    const classResults = (resultsList || []).filter(
+      r => r.className && r.className.toLowerCase() === selectedClass.toLowerCase()
     );
 
     // Filter and extract real daily register stats from localStorage if they exist
@@ -424,44 +446,43 @@ export function TerminalReportModule({
     } catch (e) {}
 
     const classAttendanceLogs = cachedAttendance.filter(
-      r => r.className.toLowerCase() === selectedClass.toLowerCase()
+      r => r.className && r.className.toLowerCase() === selectedClass.toLowerCase()
     );
 
-    // Default high-fidelity Ghanaian roster to enrich the list and ensure offline power
-    const defaultRoster = [
-      { name: "Kojo Mensah", id: "std_1", exam: 46, cw: 42, hw: 44, pres: 88, abs: 2 },
-      { name: "Ama Serwaa", id: "std_2", exam: 48, cw: 45, hw: 47, pres: 90, abs: 0 },
-      { name: "Kwame Boateng", id: "std_3", exam: 34, cw: 38, hw: 35, pres: 84, abs: 6 },
-      { name: "Efua Ansah", id: "std_4", exam: 41, cw: 40, hw: 42, pres: 87, abs: 3 },
-      { name: "Yaw Osei", id: "std_5", exam: 29, cw: 30, hw: 32, pres: 79, abs: 11 },
-      { name: "Abena Appiah", id: "std_6", exam: 47, cw: 46, hw: 45, pres: 89, abs: 1 },
-      { name: "Emmanuel Owusu", id: "std_7", exam: 39, cw: 41, hw: 38, pres: 86, abs: 4 },
-      { name: "Sarah Jenkins", id: "std_8", exam: 44, cw: 42, hw: 41, pres: 88, abs: 2 },
-      { name: "Benjamin Thompson", id: "std_9", exam: 32, cw: 35, hw: 30, pres: 85, abs: 5 },
-      { name: "Michael Rodriguez", id: "std_10", exam: 24, cw: 28, hw: 25, pres: 74, abs: 16 }
-    ];
+    // Load any custom roster saved for this class
+    let savedRoster: string[] = [];
+    try {
+      const custom = localStorage.getItem("omr_custom_rosters");
+      if (custom) {
+        const parsed = JSON.parse(custom);
+        if (parsed[selectedClass] && Array.isArray(parsed[selectedClass])) {
+          savedRoster = parsed[selectedClass];
+        }
+      }
+      if (savedRoster.length === 0) {
+        const rawRoster = localStorage.getItem(`omr_roster_${selectedClass}`);
+        if (rawRoster) savedRoster = JSON.parse(rawRoster);
+      }
+    } catch (e) {}
 
-    // Combine OMR scans with defaults to prevent an empty state
     const processedStudents: StudentReportRow[] = [];
     
-    // 1. Incorporate OMR scans
+    // 1. Incorporate real OMR scans
     classResults.forEach((res, index) => {
-      // Calculate exam raw out of whatever total questions they scanned
-      const rawScore = res.score;
+      const rawScore = res.score || 0;
       const rawMax = res.totalQuestions || 50;
       const examPct = (rawScore / rawMax) * 100;
       
       const sName = res.candidateName || `Scanned Candidate #${res.candidateId}`;
 
-      // Look up real daily register statistics
-      let pres = 86;
-      let abs = 4;
+      let pres = 0;
+      let abs = 0;
       if (classAttendanceLogs.length > 0) {
         let hasRegisterRecords = false;
         let presCount = 0;
         let absCount = 0;
         classAttendanceLogs.forEach(log => {
-          const status = log.statuses[sName];
+          const status = log.statuses && log.statuses[sName];
           if (status) {
             hasRegisterRecords = true;
             if (status === "Present" || status === "Late") presCount++;
@@ -480,9 +501,9 @@ export function TerminalReportModule({
         name: sName,
         examScoreRaw: rawScore,
         examScorePercent: Math.round(examPct),
-        classworkScore: Math.round(75 + Math.random() * 20), // mock baseline editable
-        homeworkScore: Math.round(70 + Math.random() * 25),  // mock baseline editable
-        totalScore: 0, // calculated later
+        classworkScore: 0,
+        homeworkScore: 0,
+        totalScore: 0,
         grade: "",
         remark: "",
         remarksTeacher: "",
@@ -492,41 +513,33 @@ export function TerminalReportModule({
       });
     });
 
-    // 2. Add defaults to complete the class roster
-    defaultRoster.forEach((def, index) => {
-      // Avoid duplicate names if they are already in classResults
-      if (!processedStudents.some(s => s.name.toLowerCase() === def.name.toLowerCase())) {
-        const examPct = (def.exam / 50) * 100;
-
-        // Look up real daily register statistics
-        let pres = def.pres;
-        let abs = def.abs;
+    // 2. Add saved roster students if not already in classResults
+    savedRoster.forEach((studentName: string, index: number) => {
+      if (!processedStudents.some(s => s.name.toLowerCase() === studentName.toLowerCase())) {
+        let pres = 0;
+        let abs = 0;
         if (classAttendanceLogs.length > 0) {
-          let hasRegisterRecords = false;
           let presCount = 0;
           let absCount = 0;
           classAttendanceLogs.forEach(log => {
-            const status = log.statuses[def.name];
+            const status = log.statuses && log.statuses[studentName];
             if (status) {
-              hasRegisterRecords = true;
               if (status === "Present" || status === "Late") presCount++;
               else if (status === "Absent") absCount++;
             }
           });
-          if (hasRegisterRecords) {
-            pres = presCount;
-            abs = absCount;
-          }
+          pres = presCount;
+          abs = absCount;
         }
 
         processedStudents.push({
-          id: def.id,
+          id: `stu_${Date.now()}_${index}`,
           rollNumber: `ROLL-${(processedStudents.length + 1).toString().padStart(2, "0")}`,
-          name: def.name,
-          examScoreRaw: def.exam,
-          examScorePercent: Math.round(examPct),
-          classworkScore: def.cw,
-          homeworkScore: def.hw,
+          name: studentName,
+          examScoreRaw: 0,
+          examScorePercent: 0,
+          classworkScore: 0,
+          homeworkScore: 0,
           totalScore: 0,
           grade: "",
           remark: "",
@@ -557,14 +570,14 @@ export function TerminalReportModule({
       let totalSubjectTotalsSum = 0;
       const scoresMap = student.subjectScores || {};
 
-      subjects.forEach((sub, idx) => {
+      subjects.forEach((sub) => {
         const subScore = scoresMap[sub.id] || {
-          examScoreRaw: Math.max(0, Math.min(rawMax, student.examScoreRaw + (idx % 2 === 0 ? (idx % 3) - 1 : -(idx % 3)))),
-          classworkScore: Math.max(0, Math.min(50, student.classworkScore + (idx % 2 === 1 ? 2 : -2))),
-          homeworkScore: Math.max(0, Math.min(50, student.homeworkScore + (idx % 2 === 0 ? 1 : -1)))
+          examScoreRaw: student.examScoreRaw,
+          classworkScore: student.classworkScore,
+          homeworkScore: student.homeworkScore
         };
 
-        const examPct = (subScore.examScoreRaw / rawMax) * 100;
+        const examPct = rawMax > 0 ? (subScore.examScoreRaw / rawMax) * 100 : 0;
         const weightedExam = (examPct * eWeight) / 100;
         const caTotal = subScore.classworkScore + subScore.homeworkScore;
         const weightedCA = (caTotal * caWeight) / 100;
@@ -594,7 +607,7 @@ export function TerminalReportModule({
 
       return {
         ...student,
-        examScorePercent: Math.round((student.examScoreRaw / rawMax) * 100),
+        examScorePercent: rawMax > 0 ? Math.round((student.examScoreRaw / rawMax) * 100) : 0,
         totalScore: finalTotal,
         grade: scaleResult.grade,
         remark: scaleResult.remark,
@@ -702,17 +715,17 @@ export function TerminalReportModule({
         id: `manual_${Date.now()}`,
         rollNumber: rollNum,
         name: newName,
-        examScoreRaw: Math.round(maxExamValue * 0.7),
-        examScorePercent: 70,
-        classworkScore: 38,
-        homeworkScore: 36,
+        examScoreRaw: 0,
+        examScorePercent: 0,
+        classworkScore: 0,
+        homeworkScore: 0,
         totalScore: 0,
         grade: "",
         remark: "",
         remarksTeacher: "",
         remarksHead: "",
-        attendancePresent: Math.round(totalDays * 0.95),
-        attendanceAbsent: Math.round(totalDays * 0.05)
+        attendancePresent: totalDays,
+        attendanceAbsent: 0
       };
       return recomputeAcademicMetrics([...prev, newRow], examWeight, maxExamValue, schoolLevel);
     });
@@ -976,9 +989,9 @@ export function TerminalReportModule({
                       }}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-emerald-500"
                     >
-                      <option value="JHS 2 Gold">JHS 2 Gold (Grade 8)</option>
-                      <option value="Class 6 Emerald">Class 6 Emerald (Grade 6)</option>
-                      <option value="Form 1 Platinum">Form 1 Platinum (Grade 10)</option>
+                      {availableClasses.map((cls) => (
+                        <option key={cls} value={cls}>{cls}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -1568,7 +1581,9 @@ export function TerminalReportModule({
                     {filteredStudents.length === 0 ? (
                       <tr>
                         <td colSpan={9} className="px-5 py-12 text-center text-slate-400 font-medium">
-                          No student records matched search query.
+                          {students.length === 0 
+                            ? "No student records added for this class yet. Click 'Add Candidate' or import CSV to get started." 
+                            : "No student records matched search query."}
                         </td>
                       </tr>
                     ) : (
@@ -1778,7 +1793,29 @@ export function TerminalReportModule({
         {/* ========================================================= */}
         {/* STEP 2: SMART REMARKS & EVALUATION SCREEN                 */}
         {/* ========================================================= */}
-        {currentStep === 2 && activeFocusedStudent && (
+        {currentStep === 2 && (
+          students.length === 0 || !activeFocusedStudent ? (
+            <div className="bg-white border border-dashed border-slate-300 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 mx-auto bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+                <MessageSquare className="w-8 h-8" />
+              </div>
+              <div className="max-w-md mx-auto space-y-1">
+                <h3 className="text-base font-black text-slate-900">No Candidates in Active Class</h3>
+                <p className="text-xs text-slate-500">
+                  Please add student records in the Data Entry Grid (Step 2) to evaluate performance and generate smart teacher and headteacher remarks.
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  onClick={() => setCurrentStep(1)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Go to Data Entry Grid</span>
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-6 animate-fade-in">
             {/* Header */}
             <div>
@@ -2051,6 +2088,7 @@ export function TerminalReportModule({
               </button>
             </div>
           </div>
+          )
         )}
 
         {/* ========================================================= */}
@@ -2144,7 +2182,29 @@ export function TerminalReportModule({
               {/* Carousel Panel: Crisp vertical scrolling of A4 paper cards */}
               <div className="md:col-span-3 space-y-8 print:p-0 print:m-0" id="terminal_reports_print_section">
                 
-                {students.map((std, idx) => {
+                {students.length === 0 ? (
+                  <div className="bg-white border border-dashed border-slate-300 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+                    <div className="w-16 h-16 mx-auto bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+                      <Printer className="w-8 h-8" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-1">
+                      <h3 className="text-base font-black text-slate-900">No Student Records to Preview</h3>
+                      <p className="text-xs text-slate-500">
+                        Please add student records in the Data Entry Grid (Step 2) to compile and preview printable report cards.
+                      </p>
+                    </div>
+                    <div className="pt-2">
+                      <button
+                        onClick={() => setCurrentStep(1)}
+                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition inline-flex items-center gap-2 cursor-pointer"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Go to Data Entry Grid</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                students.map((std, idx) => {
                   const scaleResult = calculateGESGrade(std.totalScore);
                   return (
                     <div 
@@ -2367,7 +2427,8 @@ export function TerminalReportModule({
                       </div>
                     </div>
                   );
-                })}
+                })
+                )}
 
               </div>
 
@@ -2825,7 +2886,7 @@ export function TerminalReportModule({
             </div>
 
             <p className="text-xs text-slate-500">
-              You are submitting class marks to <strong>{linkedSchool?.name || "St. Peter's Basic School"}</strong> for Headteacher review and approval.
+              You are submitting class marks to <strong>{linkedSchool?.name || "the School Administration"}</strong> for Headteacher review and approval.
             </p>
 
             {/* Pre-flight Checklist Summary */}

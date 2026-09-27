@@ -19,58 +19,68 @@ interface StudentItem {
   className: string;
 }
 
-const MOCK_STUDENTS: StudentItem[] = [
-  { id: "STU-001", name: "Kwesi Mensah", rollNo: "JHS2-001", className: "JHS 2 Gold" },
-  { id: "STU-002", name: "Ama Osei-Bonsu", rollNo: "JHS2-002", className: "JHS 2 Gold" },
-  { id: "STU-003", name: "Kofi Annan Jr.", rollNo: "JHS2-003", className: "JHS 2 Gold" },
-  { id: "STU-004", name: "Abena Appiah", rollNo: "JHS2-004", className: "JHS 2 Gold" },
-  { id: "STU-005", name: "Yaw Dankwa", rollNo: "JHS2-005", className: "JHS 2 Gold" },
-  { id: "STU-006", name: "Efua Kyei", rollNo: "JHS1-012", className: "JHS 1 Emerald" },
-  { id: "STU-007", name: "Kojo Adjei", rollNo: "P6-008", className: "Primary 6 Ruby" },
-];
-
-const INITIAL_INVENTORY: InventoryItem[] = [
-  { id: "INV-001", title: "GES B7 Core Science Textbook", code: "GES-SCI-B7", category: "textbook", totalInCabinet: 5, totalIssued: 45 },
-  { id: "INV-002", title: "GES B8 Mathematics Textbook", code: "GES-MATH-B8", category: "textbook", totalInCabinet: 8, totalIssued: 42 },
-  { id: "INV-003", title: "NaCCA English Reader B7", code: "NACCA-ENG-B7", category: "textbook", totalInCabinet: 12, totalIssued: 38 },
-  { id: "INV-004", title: "School Exercise Book (Graph)", code: "EX-GRAPH-80P", category: "exercise_book", totalInCabinet: 120, totalIssued: 280 },
-  { id: "INV-005", title: "Standard Mathematical Set", code: "MATH-SET-GH", category: "math_set", totalInCabinet: 15, totalIssued: 35 },
-  { id: "INV-006", title: "School Crested Jersey Uniform", code: "UNI-JHS-M", category: "uniform", totalInCabinet: 10, totalIssued: 40 },
-];
-
-const INITIAL_DISTRIBUTIONS: ResourceDistribution[] = [
-  { id: "DIST-001", studentId: "STU-001", studentName: "Kwesi Mensah", className: "JHS 2 Gold", itemTitle: "GES B7 Core Science Textbook", itemCategory: "textbook", serialNumber: "SN-SCI-9921", condition: "Good", issueDate: "2026-01-15", isReturned: false },
-  { id: "DIST-002", studentId: "STU-003", studentName: "Kofi Annan Jr.", className: "JHS 2 Gold", itemTitle: "GES B7 Core Science Textbook", itemCategory: "textbook", serialNumber: "SN-SCI-9923", condition: "Fair", issueDate: "2026-01-15", isReturned: false },
-  { id: "DIST-003", studentId: "STU-004", studentName: "Abena Appiah", className: "JHS 2 Gold", itemTitle: "GES B7 Core Science Textbook", itemCategory: "textbook", serialNumber: "SN-SCI-9924", condition: "Good", issueDate: "2026-01-15", isReturned: false },
-  { id: "DIST-004", studentId: "STU-002", studentName: "Ama Osei-Bonsu", className: "JHS 2 Gold", itemTitle: "GES B8 Mathematics Textbook", itemCategory: "textbook", serialNumber: "SN-MATH-8812", condition: "New", issueDate: "2026-01-16", isReturned: true, returnDate: "2026-06-20" },
-];
-
 export function ResourceTrackerModule({ 
   onBack, 
   selectedClass, 
   setSelectedClass 
 }: ResourceTrackerModuleProps) {
   const [activeMode, setActiveMode] = useState<"issue" | "return">("issue");
-  const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_INVENTORY);
-  const [distributions, setDistributions] = useState<ResourceDistribution[]>(INITIAL_DISTRIBUTIONS);
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+    const cached = localStorage.getItem("teacher_inventory");
+    return cached ? JSON.parse(cached) : [];
+  });
+  const [distributions, setDistributions] = useState<ResourceDistribution[]>(() => {
+    const cached = localStorage.getItem("teacher_distributions");
+    return cached ? JSON.parse(cached) : [];
+  });
+
+  const studentsList = useMemo<StudentItem[]>(() => {
+    try {
+      const custom = localStorage.getItem("omr_custom_rosters");
+      if (custom) {
+        const parsed = JSON.parse(custom);
+        const list: StudentItem[] = [];
+        Object.keys(parsed).forEach(cls => {
+          parsed[cls].forEach((name: string, i: number) => {
+            list.push({
+              id: `STU-${cls.replace(/\s+/g, '')}-${i + 1}`,
+              name,
+              rollNo: `${cls.slice(0, 3)}-${(i + 1).toString().padStart(3, '0')}`,
+              className: cls
+            });
+          });
+        });
+        if (list.length > 0) return list;
+      }
+    } catch {}
+    return [];
+  }, []);
 
   const [selectedCategory, setSelectedCategory] = useState<ResourceCategory>("textbook");
-  const [selectedItemCode, setSelectedItemCode] = useState<string>("GES-SCI-B7");
+  const [selectedItemCode, setSelectedItemCode] = useState<string>("");
   const [serialNumber, setSerialNumber] = useState<string>("");
   const [condition, setCondition] = useState<AssetCondition>("Good");
   
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(MOCK_STUDENTS[0].id);
-  const [selectedBulkStudentIds, setSelectedBulkStudentIds] = useState<string[]>(
-    MOCK_STUDENTS.map(s => s.id)
-  );
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(() => studentsList[0]?.id || "");
+  const [selectedBulkStudentIds, setSelectedBulkStudentIds] = useState<string[]>([]);
 
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
   const [isScanning, setIsScanning] = useState<boolean>(false);
 
   const [returnTarget, setReturnTarget] = useState<ResourceDistribution | null>(null);
   const [returnCondition, setReturnCondition] = useState<AssetCondition>("Good");
-
-  const classList = ["JHS 2 Gold", "JHS 1 Emerald", "Primary 6 Ruby", "School-Wide Ledger"];
+  const classList = useMemo(() => {
+    const fromStudents = studentsList.map(s => s.className).filter(Boolean);
+    let fromRosters: string[] = [];
+    try {
+      const cached = localStorage.getItem("omr_custom_rosters");
+      if (cached) {
+        fromRosters = Object.keys(JSON.parse(cached));
+      }
+    } catch {}
+    const combined = Array.from(new Set(["School-Wide Ledger", ...fromStudents, ...fromRosters, selectedClass].filter(Boolean)));
+    return combined;
+  }, [studentsList, selectedClass]);
 
   const activeItem = useMemo(() => {
     return inventory.find(i => i.code === selectedItemCode) || inventory[0];
@@ -84,12 +94,12 @@ export function ResourceTrackerModule({
   }, [distributions, selectedClass]);
 
   const classStudents = useMemo(() => {
-    return MOCK_STUDENTS.filter(s => selectedClass === "School-Wide Ledger" || s.className === selectedClass);
-  }, [selectedClass]);
+    return studentsList.filter(s => selectedClass === "School-Wide Ledger" || s.className === selectedClass);
+  }, [studentsList, selectedClass]);
 
   const handleIssueSingle = (e: React.FormEvent) => {
     e.preventDefault();
-    const student = MOCK_STUDENTS.find(s => s.id === selectedStudentId);
+    const student = studentsList.find(s => s.id === selectedStudentId);
     if (!student || !activeItem) return;
 
     const newDist: ResourceDistribution = {
@@ -125,12 +135,12 @@ export function ResourceTrackerModule({
     if (selectedBulkStudentIds.length === 0 || !activeItem) return;
 
     const newDistros: ResourceDistribution[] = selectedBulkStudentIds.map(stId => {
-      const st = MOCK_STUDENTS.find(s => s.id === stId)!;
+      const st = studentsList.find(s => s.id === stId);
       return {
         id: `DIST-${Date.now()}-${stId}`,
-        studentId: st.id,
-        studentName: st.name,
-        className: st.className,
+        studentId: st?.id || stId,
+        studentName: st?.name || `Student ${stId}`,
+        className: st?.className || selectedClass,
         itemTitle: activeItem.title,
         itemCategory: activeItem.category,
         condition: "New",

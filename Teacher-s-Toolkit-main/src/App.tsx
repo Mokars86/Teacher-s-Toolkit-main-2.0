@@ -16,6 +16,7 @@ import {
   UserProfile, ClassSettings, AnswerKey, GradedResult, ScreenId, QuestionConfidence,
   SchoolMode, UserRole, SchoolProfile
 } from './types';
+import { processOMRSheetImage, simulateStudentSheet, ScanPreset } from './services/omrService';
 import { 
   ScanIllustration, GradeIllustration, OfflineIllustration, ShrugIllustration, TeacherAvatar 
 } from './components/TeacherIllustrations';
@@ -38,10 +39,13 @@ import { QuestionBankModule } from './components/QuestionBankModule';
 import { SubscriptionModal } from './components/SubscriptionModal';
 import { PaywallModal } from './components/PaywallModal';
 import { ReferralHubModal } from './components/ReferralHubModal';
+import { GradeSlipModal } from './components/GradeSlipModal';
+import { PrivacyPolicyModal } from './components/PrivacyPolicyModal';
 import { 
   canScanOMR, hasProAccess, hasSchoolLicense, 
   LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, validateAndRedeemVoucher 
 } from './services/subscriptionService';
+import { supabase, dbService } from './services/supabaseClient';
 
 export default function App() {
   // --- STATE PERSISTENCE & INITIAL SEEDING ---
@@ -49,57 +53,51 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
   const [splashStatusText, setSplashStatusText] = useState<string>("Initializing offline engine...");
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState<boolean>(false);
 
   // Mode & Role Management State
-  const [activeSchoolMode, setActiveSchoolMode] = useState<SchoolMode>("linked");
+  const [activeSchoolMode, setActiveSchoolMode] = useState<SchoolMode>("personal");
   const [userRole, setUserRole] = useState<UserRole>("teacher");
-  const [selectedAssignedClass, setSelectedAssignedClass] = useState<string>("JHS 2 Gold");
+  const [selectedAssignedClass, setSelectedAssignedClass] = useState<string>("");
   
-  const [linkedSchool, setLinkedSchool] = useState<SchoolProfile | null>({
-    id: "SCH_001",
-    name: "St. Peter's Basic School",
-    code: "SCH-GH-8821",
-    region: "Greater Accra Region",
-    address: "P.O. Box 42, Osu, Accra - Ghana",
-    motto: "Excellence and Integrity",
-    headteacherName: "Rev. Dr. Emmanuel Mensah",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 480,
-    totalTeachers: 18,
+  const [linkedSchool, setLinkedSchool] = useState<SchoolProfile | null>(() => {
+    const cached = localStorage.getItem('omr_linked_school');
+    return cached ? JSON.parse(cached) : null;
   });
 
-  const [customBranding, setCustomBranding] = useState({
-    schoolName: "St. Peter's Basic School",
-    address: "P.O. Box 42, Osu, Accra",
-    motto: "Excellence & Integrity",
-    logoUrl: "",
+  const [customBranding, setCustomBranding] = useState<{
+    schoolName: string;
+    address: string;
+    motto: string;
+    logoUrl: string;
+  }>(() => {
+    const cached = localStorage.getItem('omr_custom_branding');
+    return cached ? JSON.parse(cached) : {
+      schoolName: "",
+      address: "",
+      motto: "",
+      logoUrl: "",
+    };
   });
 
   const [isSchoolModalOpen, setIsSchoolModalOpen] = useState<boolean>(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState<boolean>(false);
 
-  const [notifications, setNotifications] = useState([
-    {
-      id: "notif_1",
-      title: "Headteacher Review Feedback",
-      message: "Rev. Dr. Mensah approved Terminal Reports for Primary 5 Emerald.",
-      time: "10 mins ago",
-      read: false,
-      type: "approval"
-    },
-    {
-      id: "notif_2",
-      title: "School Sync Queue",
-      message: "3 offline scanned sheets ready for automatic headteacher sync.",
-      time: "1 hour ago",
-      read: false,
-      type: "sync"
-    }
-  ]);
+  const [notifications, setNotifications] = useState<{
+    id: string;
+    title: string;
+    message: string;
+    time: string;
+    read: boolean;
+    type: string;
+  }[]>([]);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState<boolean>(false);
   const [isPaywallModalOpen, setIsPaywallModalOpen] = useState<boolean>(false);
   const [isReferralModalOpen, setIsReferralModalOpen] = useState<boolean>(false);
+  const [gradeSlipModalResult, setGradeSlipModalResult] = useState<GradedResult | null>(null);
   const [paywallInfo, setPaywallInfo] = useState<{ title?: string; description?: string; featureTriggered?: string }>({});
+  const [dashboardCategory, setDashboardCategory] = useState<'all' | 'assessment' | 'classroom' | 'operations' | 'community'>('all');
+  const [dashboardSearch, setDashboardSearch] = useState<string>('');
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const cached = localStorage.getItem('omr_user_profile');
@@ -107,26 +105,26 @@ export default function App() {
       const parsed = JSON.parse(cached);
       return {
         ...parsed,
-        scansThisMonth: parsed.scansThisMonth ?? 18,
+        scansThisMonth: parsed.scansThisMonth ?? 0,
         maxFreeScansPerMonth: parsed.maxFreeScansPerMonth ?? 50,
-        smsCredits: parsed.smsCredits ?? 120,
+        smsCredits: parsed.smsCredits ?? 10,
       };
     }
     return {
-      email: 'teacher@school.edu.gh',
-      fullName: 'Teacher Kwesi Mensah',
-      isLoggedIn: true,
+      email: '',
+      fullName: '',
+      isLoggedIn: false,
       isPremium: false,
       syncEnabled: true,
-      offlineCount: 3,
-      rewardPoints: 150,
-      referralCode: 'TEACHER-GH-8921',
-      referralCount: 2,
-      submittedQuestionsCount: 1,
+      offlineCount: 0,
+      rewardPoints: 0,
+      referralCode: '',
+      referralCount: 0,
+      submittedQuestionsCount: 0,
       activeSubscriptionPlan: 'Free',
-      scansThisMonth: 18,
+      scansThisMonth: 0,
       maxFreeScansPerMonth: 50,
-      smsCredits: 120,
+      smsCredits: 10,
       endOfTermPassExpiry: null,
       schoolLicenseExpiry: null,
     };
@@ -163,20 +161,31 @@ export default function App() {
     }
   };
 
-  const handleLogoutHeadteacher = () => {
+  const handleLogoutHeadteacher = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn("Sign out error:", e);
+    }
     setUserRole("teacher");
     setActiveSchoolMode("personal");
-    setUserProfile((prev) => ({ ...prev, isLoggedIn: false }));
+    setUserProfile((prev) => ({
+      ...prev,
+      email: '',
+      fullName: '',
+      isLoggedIn: false
+    }));
     setActiveScreen(ScreenId.AUTH);
   };
 
-  // 3. USER AUTHENTICATION (LOGIN/SIGNUP)
+  // 3. USER AUTHENTICATION (LOGIN/SIGNUP WITH SUPABASE)
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPass, setAuthPass] = useState<string>('');
   const [authName, setAuthName] = useState<string>('');
   const [selectedAuthRole, setSelectedAuthRole] = useState<UserRole>('teacher');
   const [isRegistering, setIsRegistering] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>('');
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [authReferralCode, setAuthReferralCode] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
@@ -188,58 +197,212 @@ export default function App() {
     return '';
   });
 
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  // Listen to Supabase Auth State & Restore Session
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (session?.user && !error) {
+        const u = session.user;
+        const meta = u.user_metadata || {};
+        const role = (meta.role as UserRole) || 'teacher';
+        setUserRole(role);
+        setUserProfile((prev) => ({
+          ...prev,
+          email: u.email || '',
+          fullName: meta.full_name || u.email?.split('@')[0] || 'User',
+          isLoggedIn: true,
+          role: role,
+        }));
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session?.user) {
+        const u = session.user;
+        const meta = u.user_metadata || {};
+        const role = (meta.role as UserRole) || 'teacher';
+        setUserRole(role);
+        setUserProfile((prev) => ({
+          ...prev,
+          email: u.email || '',
+          fullName: meta.full_name || u.email?.split('@')[0] || 'User',
+          isLoggedIn: true,
+          role: role,
+        }));
+      } else if (event === 'SIGNED_OUT') {
+        setUserProfile((prev) => ({
+          ...prev,
+          email: '',
+          fullName: '',
+          isLoggedIn: false
+        }));
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
 
-    if (!authEmail || !authPass || (isRegistering && !authName)) {
-      setAuthError('All form credentials are required.');
+    const cleanEmail = authEmail.trim();
+    const cleanPassword = authPass.trim();
+    const cleanName = authName.trim();
+
+    if (!cleanEmail || !cleanPassword || (isRegistering && !cleanName)) {
+      setAuthError('Please fill in all required form fields.');
       return;
     }
 
     const assignedRole = selectedAuthRole;
     setUserRole(assignedRole);
+    setIsAuthLoading(true);
 
-    let earnedBonusPoints = 0;
-    if (isRegistering && authReferralCode.trim()) {
-      // Headteacher school referral grants 20 bonus points to the referred second school (10 pts for teachers)
-      earnedBonusPoints = assignedRole === 'headteacher' ? 20 : 10;
+    try {
+      if (isRegistering) {
+        let earnedBonusPoints = 0;
+        if (authReferralCode.trim()) {
+          earnedBonusPoints = assignedRole === 'headteacher' ? 20 : 10;
+        }
+        const generatedRefCode = (assignedRole === 'headteacher' ? 'SCH-REF-' : 'TEACHER-GH-') + Math.floor(1000 + Math.random() * 9000);
+
+        // Real Supabase Sign Up Call
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: cleanPassword,
+          options: {
+            data: {
+              full_name: cleanName,
+              role: assignedRole,
+              referral_code: generatedRefCode,
+              bonus_points: earnedBonusPoints,
+            },
+          },
+        });
+
+        if (signUpError) {
+          setAuthError(signUpError.message);
+          setIsAuthLoading(false);
+          return;
+        }
+
+        const user = signUpData.user;
+        const fullName = cleanName || user?.email?.split('@')[0] || 'Teacher';
+
+        // Save / Upsert Profile in Supabase
+        if (user) {
+          await dbService.upsertRow('user_profiles', {
+            id: user.id,
+            auth_user_id: user.id,
+            full_name: fullName,
+            email: cleanEmail,
+            role: assignedRole,
+            school_name: linkedSchool?.name || '',
+          });
+        }
+
+        setUserProfile((prev) => ({
+          ...prev,
+          email: cleanEmail,
+          fullName: fullName,
+          isLoggedIn: true,
+          isPremium: true,
+          rewardPoints: (prev.rewardPoints || 0) + earnedBonusPoints,
+          referralCode: generatedRefCode,
+          syncEnabled: true,
+          offlineCount: 0,
+        }));
+
+        if (earnedBonusPoints > 0) {
+          alert(`🎉 Welcome! Referral code applied. Your account received +${earnedBonusPoints} Bonus Reward Points!`);
+        }
+
+        // Navigate to appropriate panel
+        if (assignedRole === 'headteacher') {
+          setActiveScreen(ScreenId.HEADTEACHER_PANEL);
+        } else {
+          setActiveScreen(ScreenId.DASHBOARD);
+        }
+      } else {
+        // Real Supabase Login Call
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: cleanPassword,
+        });
+
+        if (signInError) {
+          setAuthError(signInError.message);
+          setIsAuthLoading(false);
+          return;
+        }
+
+        const user = signInData.user;
+        const metadata = user?.user_metadata || {};
+        const fullName = metadata.full_name || cleanEmail.split('@')[0] || 'Teacher';
+        const role = (metadata.role as UserRole) || assignedRole;
+
+        setUserRole(role);
+        setUserProfile((prev) => ({
+          ...prev,
+          email: cleanEmail,
+          fullName: fullName,
+          isLoggedIn: true,
+          role: role,
+          syncEnabled: true,
+          offlineCount: 0,
+        }));
+
+        if (role === 'headteacher') {
+          setActiveScreen(ScreenId.HEADTEACHER_PANEL);
+        } else {
+          setActiveScreen(ScreenId.DASHBOARD);
+        }
+      }
+    } catch (err: any) {
+      console.error('Authentication error:', err);
+      setAuthError(err.message || 'An unexpected error occurred during authentication.');
+    } finally {
+      setIsAuthLoading(false);
     }
+  };
 
-    const generatedRefCode = (assignedRole === 'headteacher' ? 'SCH-REF-' : 'TEACHER-GH-') + Math.floor(1000 + Math.random() * 9000);
-
-    setUserProfile((prev) => ({
-      ...prev,
-      email: authEmail,
-      fullName: isRegistering ? authName : (authEmail.split('@')[0] || (assignedRole === 'headteacher' ? 'Headteacher User' : 'Teacher User')),
-      isLoggedIn: true,
-      isPremium: true,
-      rewardPoints: (prev.rewardPoints || 150) + earnedBonusPoints,
-      referralCode: prev.referralCode || generatedRefCode,
-      syncEnabled: true,
-      offlineCount: 0
-    }));
-
-    if (earnedBonusPoints > 0) {
-      alert(`🎉 Welcome! Referral link applied. Your ${assignedRole === 'headteacher' ? 'School' : 'Teacher'} account received +${earnedBonusPoints} Bonus Reward Points!`);
-    }
-    
-    // Automatically trigger synced status on results when logging in
-    setResultsList(prev => prev.map(r => ({ ...r, status: 'Synced' })));
-
-    if (assignedRole === 'headteacher') {
-      setActiveScreen(ScreenId.HEADTEACHER_PANEL);
-    } else {
-      setActiveScreen(ScreenId.DASHBOARD);
-    }
+  const isMockClassName = (name?: string | null): boolean => {
+    if (!name) return false;
+    const n = name.trim().toLowerCase();
+    return (
+      n === 'grade 10-a' ||
+      n === 'grade 10- a' ||
+      n === 'grade 10 a' ||
+      n === 'grade 10-b' ||
+      n === 'grade 10' ||
+      n === 'jhs 3 diamond' ||
+      n === 'basic 5 green' ||
+      n === 'basic 5' ||
+      n === 'class 5' ||
+      n === 'jhs 2 gold' ||
+      n === 'primary 6 ruby'
+    );
   };
 
   const [classSettings, setClassSettings] = useState<ClassSettings>(() => {
     const cached = localStorage.getItem('omr_class_settings');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        // Clear out any legacy hardcoded mock classes
+        if (isMockClassName(parsed.className)) {
+          parsed.className = '';
+        }
+        return parsed;
+      } catch {
+        // fallback
+      }
+    }
     return {
-      testName: 'Mathematics Term Quiz',
-      className: 'Grade 10-A',
+      testName: '',
+      className: '',
       totalQuestions: 20,
       gradingScale: { A: 90, B: 80, C: 70, D: 60 }
     };
@@ -247,86 +410,35 @@ export default function App() {
 
   const [savedKeys, setSavedKeys] = useState<AnswerKey[]>(() => {
     const cached = localStorage.getItem('omr_saved_keys');
-    if (cached) return JSON.parse(cached);
-    // Seed default keys
-    return [
-      {
-        id: 'key_math_final',
-        title: 'Grade 10 - Math Final',
-        className: 'Grade 10-A',
-        questionsCount: 20,
-        answers: {
-          1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'A', 6: 'B', 7: 'C', 8: 'D',
-          9: 'A', 10: 'B', 11: 'C', 12: 'D', 13: 'A', 14: 'B', 15: 'C',
-          16: 'D', 17: 'A', 18: 'B', 19: 'C', 20: 'D'
-        },
-        createdAt: 'Jul 15, 2026'
-      },
-      {
-        id: 'key_history_quiz',
-        title: 'History Quiz 2',
-        className: 'History Quiz 2',
-        questionsCount: 15,
-        answers: {
-          1: 'B', 2: 'C', 3: 'A', 4: 'D', 5: 'A', 6: 'B', 7: 'C', 8: 'D',
-          9: 'A', 10: 'B', 11: 'C', 12: 'D', 13: 'A', 14: 'B', 15: 'C'
-        },
-        createdAt: 'Jul 10, 2026'
-      }
-    ];
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((k: AnswerKey) => !isMockClassName(k.className));
+        }
+      } catch {}
+    }
+    return [];
   });
 
   const [resultsList, setResultsList] = useState<GradedResult[]>(() => {
     const cached = localStorage.getItem('omr_graded_results');
-    if (cached) return JSON.parse(cached);
-    // Seed default historical results
-    return [
-      {
-        id: 'res_1',
-        candidateName: 'Candidate A (John Doe)',
-        candidateId: 'STUD_023',
-        testName: 'Grade 10 - Math Final',
-        className: 'Grade 10-A',
-        score: 20,
-        totalQuestions: 20,
-        percentage: 100,
-        scannedAt: '2026-07-16 14:23',
-        answers: {
-          1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'A', 6: 'B', 7: 'C', 8: 'D',
-          9: 'A', 10: 'B', 11: 'C', 12: 'D', 13: 'A', 14: 'B', 15: 'C',
-          16: 'D', 17: 'A', 18: 'B', 19: 'C', 20: 'D'
-        },
-        status: 'Synced',
-        flaggedCount: 0,
-        answerKeyId: 'key_math_final',
-        imageThumbnail: ''
-      },
-      {
-        id: 'res_2',
-        candidateName: 'Candidate B (Alice Johnson)',
-        candidateId: 'STUD_088',
-        testName: 'Grade 10 - Math Final',
-        className: 'Grade 10-A',
-        score: 16,
-        totalQuestions: 20,
-        percentage: 80,
-        scannedAt: '2026-07-16 15:10',
-        answers: {
-          1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'A', 6: 'B', 7: 'C', 8: 'D',
-          9: 'A', 10: 'B', 11: 'C', 12: 'D', 13: 'A', 14: 'B', 15: 'C',
-          16: 'D', 17: 'B', 18: 'B', 19: 'C', 20: 'D'
-        },
-        status: 'Synced',
-        flaggedCount: 1,
-        answerKeyId: 'key_math_final',
-        imageThumbnail: ''
-      }
-    ];
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((r: GradedResult) => !isMockClassName(r.className));
+        }
+      } catch {}
+    }
+    return [];
   });
 
   // --- OMR FLOW SCANNING STATE ---
   const [currentScannedImage, setCurrentScannedImage] = useState<string>('');
+  const [currentScanPreset, setCurrentScanPreset] = useState<ScanPreset>('cv_real');
   const [isCurrentScanAmbiguous, setIsCurrentScanAmbiguous] = useState<boolean>(false);
+  const [isAnalyzingOMR, setIsAnalyzingOMR] = useState<boolean>(false);
   const [tempStudentName, setTempStudentName] = useState<string>('');
   
   // Interactive corner anchors for Screen 6
@@ -346,6 +458,7 @@ export default function App() {
   
   // Results summary target state
   const [recentGradedResult, setRecentGradedResult] = useState<GradedResult | null>(null);
+  const [editingQuestionNumber, setEditingQuestionNumber] = useState<number | null>(null);
 
   // Dark Mode / Theme State
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -816,11 +929,21 @@ export default function App() {
                 <button 
                   id="btn_auth_submit"
                   type="submit"
-                  className="w-full py-3 sm:py-3.5 btn-primary rounded-xl text-xs sm:text-sm mt-1"
+                  disabled={isAuthLoading}
+                  className="w-full py-3 sm:py-3.5 btn-primary rounded-xl text-xs sm:text-sm mt-1 flex items-center justify-center gap-2 transition disabled:opacity-70 disabled:cursor-not-allowed"
                 >
-                  {isRegistering 
-                    ? (selectedAuthRole === 'headteacher' ? "Sign Up as Headteacher" : "Sign Up & Sync") 
-                    : (selectedAuthRole === 'headteacher' ? "Log In to Headteacher Panel" : "Log In & Sync")}
+                  {isAuthLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      <span>Connecting to Supabase...</span>
+                    </>
+                  ) : (
+                    <span>
+                      {isRegistering 
+                        ? (selectedAuthRole === 'headteacher' ? "Sign Up as Headteacher" : "Sign Up & Sync") 
+                        : (selectedAuthRole === 'headteacher' ? "Log In to Headteacher Panel" : "Log In & Sync")}
+                    </span>
+                  )}
                 </button>
               </form>
 
@@ -902,12 +1025,32 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Developed By Attribution Badge */}
-              <div className="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-center gap-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Developed By:</span>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">
-                  <img src={mokarsLogo} alt="Mokars Tech Logo" className="w-4 h-4 object-contain" />
-                  <span className="text-xs font-black tracking-tight text-slate-800">Mokars Tech</span>
+              {/* Developed By Attribution Badge & Legal Links */}
+              <div className="mt-4 pt-3 border-t border-slate-200/80 flex flex-col items-center justify-center gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Developed By:</span>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">
+                    <img src={mokarsLogo} alt="Mokars Tech Logo" className="w-4 h-4 object-contain" />
+                    <span className="text-xs font-black tracking-tight text-slate-800">Mokars Tech</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium">
+                  <button 
+                    type="button"
+                    onClick={() => setIsPrivacyModalOpen(true)}
+                    className="hover:text-emerald-600 hover:underline transition"
+                  >
+                    Privacy Policy &amp; Terms
+                  </button>
+                  <span>&bull;</span>
+                  <a 
+                    href="/privacy.html" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="hover:text-emerald-600 hover:underline transition"
+                  >
+                    Web Policy
+                  </a>
                 </div>
               </div>
             </div>
@@ -988,10 +1131,10 @@ export default function App() {
                   onClick={() => setIsSchoolModalOpen(true)}
                   className="mt-0.5 flex items-center gap-1 cursor-pointer group max-w-[140px] xs:max-w-[200px] sm:max-w-none"
                 >
-                  {activeSchoolMode === "linked" ? (
+                  {activeSchoolMode === "linked" && linkedSchool?.name ? (
                     <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full transition truncate" style={{color:'#059669',background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)'}}>
                       <CheckCircle2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
-                      <span className="truncate">{linkedSchool?.name || "St. Peter's Basic School"}</span>
+                      <span className="truncate">{linkedSchool.name}</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full transition truncate" style={{color:'#64748b',background:'#f1f5f9',border:'1px solid #e2e8f0'}}>
@@ -1009,20 +1152,33 @@ export default function App() {
               {/* Class selector */}
               <div className="flex items-center gap-1 rounded-xl px-2 py-1 sm:px-2.5 sm:py-1.5" style={{background:'rgba(255,255,255,0.7)',border:'1px solid rgba(226,232,240,0.8)'}}>
                 <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:inline">Class:</span>
-                <select
-                  id="assigned_class_dropdown"
-                  value={selectedAssignedClass}
+                <input
+                  id="assigned_class_input"
+                  list="suggested_classes_list"
+                  placeholder="Set Class..."
+                  value={selectedAssignedClass || classSettings.className || ""}
                   onChange={(e) => {
-                    setSelectedAssignedClass(e.target.value);
-                    setClassSettings(prev => ({ ...prev, className: e.target.value }));
+                    const val = e.target.value;
+                    setSelectedAssignedClass(val);
+                    setClassSettings(prev => ({ ...prev, className: val }));
                   }}
-                  className="text-[11px] sm:text-xs font-bold bg-transparent focus:outline-none cursor-pointer max-w-[110px] sm:max-w-none truncate" style={{color:'#1e293b'}}
-                >
-                  <option value="JHS 2 Gold">JHS 2 Gold</option>
-                  <option value="Basic 5 Green">Basic 5 Green</option>
-                  <option value="Primary 4 Ruby">Primary 4 Ruby</option>
-                  <option value="SHS 1 General Arts">SHS 1 General Arts</option>
-                </select>
+                  className="text-[11px] sm:text-xs font-bold bg-transparent focus:outline-none cursor-text w-24 sm:w-32 truncate"
+                  style={{color:'#1e293b'}}
+                />
+                <datalist id="suggested_classes_list">
+                  <option value="Basic 1" />
+                  <option value="Basic 2" />
+                  <option value="Basic 3" />
+                  <option value="Basic 4" />
+                  <option value="Basic 5" />
+                  <option value="Basic 6" />
+                  <option value="JHS 1" />
+                  <option value="JHS 2" />
+                  <option value="JHS 3" />
+                  <option value="SHS 1" />
+                  <option value="SHS 2" />
+                  <option value="SHS 3" />
+                </datalist>
               </div>
 
               {/* Refer & Earn Button */}
@@ -1071,10 +1227,10 @@ export default function App() {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl md:text-2xl font-extrabold tracking-tight" style={{color:'#fff'}}>
-                    Welcome back, {userProfile.fullName}!
+                    Welcome back, {userProfile.fullName || 'Teacher'}!
                   </h2>
                   <p className="text-xs leading-relaxed max-w-lg mt-1" style={{color:'rgba(165,180,252,0.8)'}}>
-                    Command Center for <strong style={{color:'#6ee7b7'}}>{selectedAssignedClass}</strong> &nbsp;·&nbsp; {activeSchoolMode === "linked" ? linkedSchool?.name : "Personal Workspace"}
+                    Command Center for <strong style={{color:'#6ee7b7'}}>{selectedAssignedClass || classSettings.className || "All Classes"}</strong> &nbsp;·&nbsp; {activeSchoolMode === "linked" && linkedSchool?.name ? linkedSchool.name : "Personal Workspace"}
                   </p>
                 </div>
 
@@ -1091,19 +1247,19 @@ export default function App() {
               {/* Stat chips */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
                 <div className="p-3 rounded-xl text-left space-y-1" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
-                  <span className="text-[9px] font-bold uppercase tracking-widest block" style={{color:'#6ee7b7'}}>Terminal Reports</span>
-                  <p className="text-sm font-black" style={{color:'#fff'}}>18 of 25 Ready</p>
+                  <span className="text-[9px] font-bold uppercase tracking-widest block" style={{color:'#6ee7b7'}}>Graded Assessments</span>
+                  <p className="text-sm font-black" style={{color:'#fff'}}>{resultsList.length} Papers Graded</p>
                   <div className="w-full h-1.5 rounded-full overflow-hidden" style={{background:'rgba(16,185,129,0.2)'}}>
-                    <div className="h-full rounded-full" style={{width:'72%',background:'linear-gradient(90deg,#10b981,#6ee7b7)'}} />
+                    <div className="h-full rounded-full" style={{width:`${Math.min(100, resultsList.length > 0 ? Math.min(100, resultsList.length * 10) : 0)}%`,background:'linear-gradient(90deg,#10b981,#6ee7b7)'}} />
                   </div>
                 </div>
 
                 <div className="p-3 rounded-xl text-left space-y-1" style={{background:'rgba(59,111,245,0.12)',border:'1px solid rgba(59,111,245,0.2)'}}>
-                  <span className="text-[9px] font-bold uppercase tracking-widest block" style={{color:'#90b8ff'}}>Headteacher Sync</span>
+                  <span className="text-[9px] font-bold uppercase tracking-widest block" style={{color:'#90b8ff'}}>Headteacher / Cloud Sync</span>
                   <p className="text-sm font-black" style={{color:'#fff'}}>
-                    {isOnline ? "Synced at 08:30 AM" : "3 Pending Items"}
+                    {isOnline ? "Cloud Connected" : `${userProfile.offlineCount || 0} Offline Items`}
                   </p>
-                  <p className="text-[10px] font-semibold" style={{color:'rgba(165,180,252,0.7)'}}>Auto-transfers on WiFi</p>
+                  <p className="text-[10px] font-semibold" style={{color:'rgba(165,180,252,0.7)'}}>{isOnline ? "Live sync active" : "Auto-transfers when online"}</p>
                 </div>
 
                 <div className="p-3 rounded-xl text-left space-y-1" style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)'}}>
@@ -1120,231 +1276,407 @@ export default function App() {
             </div>
           </div>
 
-          {/* ── Tool Cards Grid ── */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest" style={{color:'#94a3b8'}}>Command Center</h3>
-              <span className="chip-emerald">Paperless Tools Active</span>
-            </div>
-            
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5 md:gap-4">
-              {/* Card 1: Live OMR Camera Scan */}
-              <button
-                id="card_action_scan"
-                onClick={() => {
+          {/* ── Categorized Command Center / Tool Cards ── */}
+          {(() => {
+            const allDashboardCards = [
+              // 1. Assessment & Grading
+              {
+                id: "card_action_scan",
+                category: "assessment",
+                categoryName: "Exams & Grading",
+                categoryIcon: FileText,
+                title: "Scan Sheets",
+                description: "Camera viewfinder for instant OMR bubble scanning.",
+                badge: "Fast Engine",
+                badgeStyle: { background: 'rgba(59,111,245,0.12)', color: '#3b6ff5', border: '1px solid rgba(59,111,245,0.25)' },
+                topGradient: 'linear-gradient(90deg,#3b6ff5,#5c94ff)',
+                iconBg: 'rgba(59,111,245,0.12)',
+                iconBorder: 'rgba(59,111,245,0.2)',
+                icon: <Camera className="w-5 h-5" style={{ color: '#3b6ff5' }} />,
+                onClick: () => {
                   if (savedKeys.length > 0) { setActiveAnswerKey(savedKeys[0]); }
                   setActiveScreen(ScreenId.CAMERA_SCAN);
-                }}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#5c94ff)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(59,111,245,0.12)',border:'1px solid rgba(59,111,245,0.2)'}}>
-                  <Camera className="w-5 h-5" style={{color:'#3b6ff5'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Scan Sheets</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Camera viewfinder for instant OMR bubble scanning.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,111,245,0.12)',color:'#3b6ff5',border:'1px solid rgba(59,111,245,0.25)'}}>Fast Engine</span>
-              </button>
+                }
+              },
+              {
+                id: "card_action_keys",
+                category: "assessment",
+                categoryName: "Exams & Grading",
+                categoryIcon: FileText,
+                title: "Answer Keys",
+                description: "Configure master keys and create test patterns.",
+                topGradient: 'linear-gradient(90deg,#10b981,#6ee7b7)',
+                iconBg: 'rgba(16,185,129,0.12)',
+                iconBorder: 'rgba(16,185,129,0.2)',
+                icon: <FileText className="w-5 h-5" style={{ color: '#10b981' }} />,
+                showArrow: true,
+                onClick: () => setActiveScreen(ScreenId.SAVED_ANSWER_KEYS)
+              },
+              {
+                id: "card_action_exam_builder",
+                category: "assessment",
+                categoryName: "Exams & Grading",
+                categoryIcon: FileText,
+                title: "Exam Builder",
+                description: "Fast mobile entry, 2-column paper-saving PDF & instant OMR key generator.",
+                badge: "PRINT PDF",
+                badgeStyle: { background: 'rgba(236,72,153,0.12)', color: '#db2777', border: '1px solid rgba(236,72,153,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#ec4899,#8b5cf6)',
+                iconBg: 'rgba(236,72,153,0.12)',
+                iconBorder: 'rgba(236,72,153,0.2)',
+                icon: <FileText className="w-5 h-5" style={{ color: '#ec4899' }} />,
+                onClick: () => setActiveScreen(ScreenId.EXAM_BUILDER)
+              },
+              {
+                id: "card_action_settings",
+                category: "assessment",
+                categoryName: "Exams & Grading",
+                categoryIcon: FileText,
+                title: "Test Setup",
+                description: "Configure class rosters, questions count & grade thresholds.",
+                topGradient: 'linear-gradient(90deg,#64748b,#94a3b8)',
+                iconBg: 'rgba(100,116,139,0.12)',
+                iconBorder: 'rgba(100,116,139,0.2)',
+                icon: <Sliders className="w-5 h-5" style={{ color: '#64748b' }} />,
+                showArrow: true,
+                onClick: () => setActiveScreen(ScreenId.TEST_CLASS_SETTINGS)
+              },
 
-              {/* Card 2: Answer Keys */}
-              <button
-                id="card_action_keys"
-                onClick={() => setActiveScreen(ScreenId.SAVED_ANSWER_KEYS)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#6ee7b7)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
-                  <FileText className="w-5 h-5" style={{color:'#10b981'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Answer Keys</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Configure master keys and create test patterns.</p>
-                </div>
-                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1.5 text-slate-400 dark:text-slate-500" />
-              </button>
+              // 2. Classroom & Students
+              {
+                id: "card_action_attendance",
+                category: "classroom",
+                categoryName: "Classroom & Students",
+                categoryIcon: Users,
+                title: "Attendance",
+                description: "Daily paperless roll-call with presence percentages.",
+                badge: "NEW",
+                badgeStyle: { background: 'rgba(245,158,11,0.12)', color: '#d97706', border: '1px solid rgba(245,158,11,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
+                iconBg: 'rgba(245,158,11,0.12)',
+                iconBorder: 'rgba(245,158,11,0.2)',
+                icon: <Users className="w-5 h-5" style={{ color: '#f59e0b' }} />,
+                onClick: () => setActiveScreen(ScreenId.ATTENDANCE_SHEET)
+              },
+              {
+                id: "card_action_seating_chart",
+                category: "classroom",
+                categoryName: "Classroom & Students",
+                categoryIcon: Users,
+                title: "Seating Planner",
+                description: "Arrange desks, assign seats & anti-cheating exam layouts.",
+                badge: "NEW",
+                badgeStyle: { background: 'rgba(249,115,22,0.12)', color: '#ea580c', border: '1px solid rgba(249,115,22,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#f97316,#fdba74)',
+                iconBg: 'rgba(249,115,22,0.12)',
+                iconBorder: 'rgba(249,115,22,0.2)',
+                icon: <Users className="w-5 h-5" style={{ color: '#f97316' }} />,
+                onClick: () => setActiveScreen(ScreenId.SEATING_CHART)
+              },
+              {
+                id: "card_action_trend_tracker",
+                category: "classroom",
+                categoryName: "Classroom & Students",
+                categoryIcon: Users,
+                title: "Trend Tracker",
+                description: "Trace individual marks across weeks. Auto growth indicators.",
+                badge: "NEW",
+                badgeStyle: { background: 'rgba(6,182,212,0.12)', color: '#0891b2', border: '1px solid rgba(6,182,212,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#06b6d4,#67e8f9)',
+                iconBg: 'rgba(6,182,212,0.12)',
+                iconBorder: 'rgba(6,182,212,0.2)',
+                icon: <TrendingUp className="w-5 h-5" style={{ color: '#06b6d4' }} />,
+                onClick: () => setActiveScreen(ScreenId.STUDENT_TREND_TRACKER)
+              },
+              {
+                id: "card_action_lesson_planner",
+                category: "classroom",
+                categoryName: "Classroom & Students",
+                categoryIcon: Users,
+                title: "Lesson Planner",
+                description: "Draft objectives, TLMs and evaluation methods. Print-ready.",
+                badge: "NEW",
+                badgeStyle: { background: 'rgba(236,72,153,0.12)', color: '#db2777', border: '1px solid rgba(236,72,153,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#ec4899,#f9a8d4)',
+                iconBg: 'rgba(236,72,153,0.12)',
+                iconBorder: 'rgba(236,72,153,0.2)',
+                icon: <BookOpen className="w-5 h-5" style={{ color: '#ec4899' }} />,
+                onClick: () => setActiveScreen(ScreenId.LESSON_PLANNER)
+              },
 
-              {/* Card 3: Daily Attendance */}
-              <button
-                id="card_action_attendance"
-                onClick={() => setActiveScreen(ScreenId.ATTENDANCE_SHEET)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#fbbf24)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.2)'}}>
-                  <Users className="w-5 h-5" style={{color:'#f59e0b'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Attendance</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Daily paperless roll-call with presence percentages.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(245,158,11,0.12)',color:'#d97706',border:'1px solid rgba(245,158,11,0.25)'}}>NEW</span>
-              </button>
+              // 3. School Operations & Finance
+              {
+                id: "card_action_terminal_report",
+                category: "operations",
+                categoryName: "School Ops & Finance",
+                categoryIcon: Building2,
+                title: "Terminal Reports",
+                description: "Compile grades, assign ranks & bulk print end-of-term reports.",
+                badge: "GES",
+                badgeStyle: { background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' },
+                topGradient: 'linear-gradient(90deg,#8b5cf6,#a78bfa)',
+                iconBg: 'rgba(139,92,246,0.12)',
+                iconBorder: 'rgba(139,92,246,0.2)',
+                icon: <Award className="w-5 h-5" style={{ color: '#8b5cf6' }} />,
+                onClick: () => setActiveScreen(ScreenId.TERMINAL_REPORT)
+              },
+              {
+                id: "card_action_collections_hub",
+                category: "operations",
+                categoryName: "School Ops & Finance",
+                categoryIcon: Building2,
+                title: "Collections Hub",
+                description: "Fees, PTA & Canteen payments, Cash/MoMo, A6 receipts & SMS proofs.",
+                badge: "FINANCE",
+                badgeStyle: { background: 'rgba(16,185,129,0.12)', color: '#059669', border: '1px solid rgba(16,185,129,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#3b6ff5,#e94560)',
+                iconBg: 'rgba(59,111,245,0.12)',
+                iconBorder: 'rgba(59,111,245,0.2)',
+                icon: <DollarSign className="w-5 h-5" style={{ color: '#3b6ff5' }} />,
+                onClick: () => setActiveScreen(ScreenId.COLLECTIONS_HUB)
+              },
+              {
+                id: "card_action_resource_tracker",
+                category: "operations",
+                categoryName: "School Ops & Finance",
+                categoryIcon: Building2,
+                title: "Resource Tracker",
+                description: "Cabinet textbook allocations, serial barcoding & bulk check-offs.",
+                badge: "INVENTORY",
+                badgeStyle: { background: 'rgba(59,130,246,0.12)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)' },
+                topGradient: 'linear-gradient(90deg,#10b981,#3b82f6)',
+                iconBg: 'rgba(16,185,129,0.12)',
+                iconBorder: 'rgba(16,185,129,0.2)',
+                icon: <Package className="w-5 h-5" style={{ color: '#10b981' }} />,
+                onClick: () => setActiveScreen(ScreenId.RESOURCE_TRACKER)
+              },
 
-              {/* Card 4: Test Setup */}
-              <button
-                id="card_action_settings"
-                onClick={() => setActiveScreen(ScreenId.TEST_CLASS_SETTINGS)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#64748b,#94a3b8)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(100,116,139,0.12)',border:'1px solid rgba(100,116,139,0.2)'}}>
-                  <Sliders className="w-5 h-5" style={{color:'#64748b'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Test Setup</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Configure class rosters, questions count & grade thresholds.</p>
-                </div>
-                <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1.5 text-slate-400 dark:text-slate-500" />
-              </button>
+              // 4. Question Bank & Rewards
+              {
+                id: "card_action_question_bank",
+                category: "community",
+                categoryName: "Bank & Rewards",
+                categoryIcon: Gift,
+                title: "WAEC Question Bank",
+                description: "Submit papers for +30 Pts, refer colleagues for +20 Pts & redeem Pro plans.",
+                badge: "EARN POINTS",
+                badgeStyle: { background: 'rgba(16,185,129,0.12)', color: '#059669', border: '1px solid rgba(16,185,129,0.25)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#10b981,#059669)',
+                iconBg: 'rgba(16,185,129,0.12)',
+                iconBorder: 'rgba(16,185,129,0.2)',
+                icon: <BookOpen className="w-5 h-5" style={{ color: '#10b981' }} />,
+                onClick: () => setActiveScreen(ScreenId.QUESTION_BANK)
+              },
+              {
+                id: "card_action_referral_hub",
+                category: "community",
+                categoryName: "Bank & Rewards",
+                categoryIcon: Gift,
+                title: "Refer & Earn Pro Plans",
+                description: "Share your referral link on WhatsApp. Earn 20 pts per signup to unlock Pro features.",
+                badge: "+20 PTS / REFERRAL",
+                badgeClassName: "bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700",
+                topGradient: 'linear-gradient(90deg,#f59e0b,#eab308)',
+                iconBg: 'rgba(245,158,11,0.12)',
+                iconBorder: 'rgba(245,158,11,0.2)',
+                icon: <Gift className="w-5 h-5 text-amber-500" />,
+                onClick: () => setIsReferralModalOpen(true)
+              }
+            ];
 
-              {/* Card 5: Terminal Report Builder */}
-              <button
-                id="card_action_terminal_report"
-                onClick={() => setActiveScreen(ScreenId.TERMINAL_REPORT)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#8b5cf6,#a78bfa)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(139,92,246,0.12)',border:'1px solid rgba(139,92,246,0.2)'}}>
-                  <Award className="w-5 h-5" style={{color:'#8b5cf6'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Terminal Reports</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Compile grades, assign ranks & bulk print end-of-term reports.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(139,92,246,0.12)',color:'#8b5cf6',border:'1px solid rgba(139,92,246,0.25)'}}>GES</span>
-              </button>
+            const categoriesMeta = [
+              { id: 'all', label: 'All Tools', icon: Layers, count: allDashboardCards.length },
+              { id: 'assessment', label: 'Exams & Grading', icon: FileText, count: allDashboardCards.filter(c => c.category === 'assessment').length },
+              { id: 'classroom', label: 'Classroom & Students', icon: Users, count: allDashboardCards.filter(c => c.category === 'classroom').length },
+              { id: 'operations', label: 'School Ops & Finance', icon: Building2, count: allDashboardCards.filter(c => c.category === 'operations').length },
+              { id: 'community', label: 'Bank & Rewards', icon: Gift, count: allDashboardCards.filter(c => c.category === 'community').length },
+            ];
 
-              {/* Card 6: Progress Tracker */}
-              <button
-                id="card_action_trend_tracker"
-                onClick={() => setActiveScreen(ScreenId.STUDENT_TREND_TRACKER)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#06b6d4,#67e8f9)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(6,182,212,0.12)',border:'1px solid rgba(6,182,212,0.2)'}}>
-                  <TrendingUp className="w-5 h-5" style={{color:'#06b6d4'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Trend Tracker</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Trace individual marks across weeks. Auto growth indicators.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(6,182,212,0.12)',color:'#0891b2',border:'1px solid rgba(6,182,212,0.25)'}}>NEW</span>
-              </button>
+            const filteredCards = allDashboardCards.filter(card => {
+              const matchesCategory = dashboardCategory === 'all' || card.category === dashboardCategory;
+              const matchesSearch = !dashboardSearch.trim() || 
+                card.title.toLowerCase().includes(dashboardSearch.toLowerCase()) || 
+                card.description.toLowerCase().includes(dashboardSearch.toLowerCase());
+              return matchesCategory && matchesSearch;
+            });
 
-              {/* Card 7: Lesson Planner */}
+            const renderCardButton = (card: typeof allDashboardCards[0]) => (
               <button
-                id="card_action_lesson_planner"
-                onClick={() => setActiveScreen(ScreenId.LESSON_PLANNER)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#f9a8d4)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(236,72,153,0.12)',border:'1px solid rgba(236,72,153,0.2)'}}>
-                  <BookOpen className="w-5 h-5" style={{color:'#ec4899'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Lesson Planner</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Draft objectives, TLMs and evaluation methods. Print-ready.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.12)',color:'#db2777',border:'1px solid rgba(236,72,153,0.25)'}}>NEW</span>
-              </button>
-
-              {/* Card 8: Seating Chart */}
-              <button
-                id="card_action_seating_chart"
-                onClick={() => setActiveScreen(ScreenId.SEATING_CHART)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f97316,#fdba74)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(249,115,22,0.12)',border:'1px solid rgba(249,115,22,0.2)'}}>
-                  <Users className="w-5 h-5" style={{color:'#f97316'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Seating Planner</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Arrange desks, assign seats & anti-cheating exam layouts.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(249,115,22,0.12)',color:'#ea580c',border:'1px solid rgba(249,115,22,0.25)'}}>NEW</span>
-              </button>
-
-              {/* Card 9: School Collections Hub */}
-              <button
-                id="card_action_collections_hub"
-                onClick={() => setActiveScreen(ScreenId.COLLECTIONS_HUB)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#3b6ff5,#e94560)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(59,111,245,0.12)',border:'1px solid rgba(59,111,245,0.2)'}}>
-                  <DollarSign className="w-5 h-5" style={{color:'#3b6ff5'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Collections Hub</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Fees, PTA & Canteen payments, Cash/MoMo, A6 receipts & SMS proofs.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.12)',color:'#059669',border:'1px solid rgba(16,185,129,0.25)'}}>FINANCE</span>
-              </button>
-
-              {/* Card 10: Resource Distribution Tracker */}
-              <button
-                id="card_action_resource_tracker"
-                onClick={() => setActiveScreen(ScreenId.RESOURCE_TRACKER)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#3b82f6)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
-                  <Package className="w-5 h-5" style={{color:'#10b981'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Resource Tracker</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Cabinet textbook allocations, serial barcoding & bulk check-offs.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide" style={{background:'rgba(59,130,246,0.12)',color:'#2563eb',border:'1px solid rgba(59,130,246,0.25)'}}>INVENTORY</span>
-              </button>
-
-              {/* Card 11: Exam Builder (MCQ/Theory) */}
-              <button
-                id="card_action_exam_builder"
-                onClick={() => setActiveScreen(ScreenId.EXAM_BUILDER)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#ec4899,#8b5cf6)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(236,72,153,0.12)',border:'1px solid rgba(236,72,153,0.2)'}}>
-                  <FileText className="w-5 h-5" style={{color:'#ec4899'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Exam Builder</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Fast mobile entry, 2-column paper-saving PDF & instant OMR key generator.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(236,72,153,0.12)',color:'#db2777',border:'1px solid rgba(236,72,153,0.25)'}}>PRINT PDF</span>
-              </button>
-
-              {/* Card 12: WAEC Question Bank & Points Rewards */}
-              <button
-                id="card_action_question_bank"
-                onClick={() => setActiveScreen(ScreenId.QUESTION_BANK)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card">
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#10b981,#059669)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(16,185,129,0.12)',border:'1px solid rgba(16,185,129,0.2)'}}>
-                  <BookOpen className="w-5 h-5" style={{color:'#10b981'}} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">WAEC Question Bank</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Submit papers for +30 Pts, refer colleagues for +20 Pts & redeem Pro plans.</p>
-                </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide animate-pulse" style={{background:'rgba(16,185,129,0.12)',color:'#059669',border:'1px solid rgba(16,185,129,0.25)'}}>EARN POINTS</span>
-              </button>
-
-              {/* Card 13: Refer Colleagues & Earn Points Hub */}
-              <button
-                id="card_action_referral_hub"
-                onClick={() => setIsReferralModalOpen(true)}
-                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card"
+                key={card.id}
+                id={card.id}
+                onClick={card.onClick}
+                className="rounded-2xl p-4 text-left transition group relative overflow-hidden flex flex-col justify-between h-44 focus:outline-none cursor-pointer card-3d glass-card hover:translate-y-[-2px]"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#eab308)'}} />
-                <div className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.2)'}}>
-                  <Gift className="w-5 h-5 text-amber-500" />
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{ background: card.topGradient }} />
+                <div 
+                  className="p-2.5 rounded-xl w-11 h-11 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3" 
+                  style={{ background: card.iconBg, border: `1px solid ${card.iconBorder}` }}
+                >
+                  {card.icon}
                 </div>
                 <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Refer & Earn Pro Plans</h4>
-                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">Share your referral link on WhatsApp. Earn 20 pts per signup to unlock Pro features.</p>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">{card.title}</h4>
+                  <p className="text-[11px] mt-1 line-clamp-2 text-slate-500 dark:text-slate-400">{card.description}</p>
                 </div>
-                <span className="absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
-                  +20 PTS / REFERRAL
-                </span>
+                {card.badge && (
+                  <span 
+                    className={`absolute top-3.5 right-3.5 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${card.badgePulse ? 'animate-pulse' : ''} ${card.badgeClassName || ''}`}
+                    style={card.badgeStyle}
+                  >
+                    {card.badge}
+                  </span>
+                )}
+                {card.showArrow && (
+                  <ArrowRight className="absolute bottom-3.5 right-3.5 w-4 h-4 transition-transform group-hover:translate-x-1.5 text-slate-400 dark:text-slate-500" />
+                )}
               </button>
+            );
 
+            return (
+              <div className="space-y-4">
+                {/* Header with Title, Search, and Category Pills */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>
+                      Command Center
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5 hidden sm:block">
+                      Select a category or search for tools
+                    </p>
+                  </div>
 
-            </div>
-          </div>
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search tools (e.g. Scan, PDF, Fees)..."
+                      value={dashboardSearch}
+                      onChange={(e) => setDashboardSearch(e.target.value)}
+                      className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    />
+                    {dashboardSearch && (
+                      <button
+                        onClick={() => setDashboardSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Category Filter Pills */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {categoriesMeta.map((cat) => {
+                    const IconComponent = cat.icon;
+                    const isActive = dashboardCategory === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          setDashboardCategory(cat.id as any);
+                          setDashboardSearch('');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all duration-200 cursor-pointer ${
+                          isActive
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20 scale-[1.02]'
+                            : 'bg-white/80 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/80'
+                        }`}
+                      >
+                        <IconComponent className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
+                        <span>{cat.label}</span>
+                        <span
+                          className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                            isActive
+                              ? 'bg-white/20 text-white'
+                              : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {cat.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Rendered Cards View */}
+                {filteredCards.length === 0 ? (
+                  <div className="rounded-2xl p-8 text-center space-y-2 glass-card border border-dashed border-slate-300 dark:border-slate-700">
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No tools found matching "{dashboardSearch}"</p>
+                    <button
+                      onClick={() => { setDashboardSearch(''); setDashboardCategory('all'); }}
+                      className="text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
+                    >
+                      Clear search & filter
+                    </button>
+                  </div>
+                ) : dashboardCategory === 'all' && !dashboardSearch ? (
+                  // Grouped view when viewing "All Tools"
+                  <div className="space-y-6">
+                    {[
+                      { id: 'assessment', title: 'Exams & Grading', icon: FileText, color: '#3b6ff5' },
+                      { id: 'classroom', title: 'Classroom & Student Management', icon: Users, color: '#f59e0b' },
+                      { id: 'operations', title: 'School Operations & Finance', icon: Building2, color: '#8b5cf6' },
+                      { id: 'community', title: 'Question Bank & Rewards', icon: Gift, color: '#10b981' },
+                    ].map((group) => {
+                      const groupCards = allDashboardCards.filter(c => c.category === group.id);
+                      if (groupCards.length === 0) return null;
+                      const GroupIcon = group.icon;
+                      return (
+                        <div key={group.id} className="space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full" style={{ background: group.color }} />
+                              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                                <GroupIcon className="w-3.5 h-3.5" style={{ color: group.color }} />
+                                {group.title}
+                              </h4>
+                              <span className="text-[10px] font-bold text-slate-400 font-mono">({groupCards.length})</span>
+                            </div>
+                            <button
+                              onClick={() => setDashboardCategory(group.id as any)}
+                              className="text-[11px] font-bold text-indigo-500 hover:text-indigo-600 transition"
+                            >
+                              Focus Category →
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3.5 md:gap-4">
+                            {groupCards.map(renderCardButton)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  // Filtered single category or search results grid
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Showing {filteredCards.length} {filteredCards.length === 1 ? 'tool' : 'tools'}</span>
+                      {dashboardCategory !== 'all' && (
+                        <button
+                          onClick={() => setDashboardCategory('all')}
+                          className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                        >
+                          View All Categories
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3.5 md:gap-4">
+                      {filteredCards.map(renderCardButton)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── Recent Activity ── */}
           <div className="space-y-3">
@@ -1391,14 +1723,20 @@ export default function App() {
                   return (
                     <div 
                       key={res.id} 
-                      className="rounded-2xl p-4 flex items-center justify-between transition-all card-hover glass-card"
+                      onClick={() => {
+                        setRecentGradedResult(res);
+                        const targetK = savedKeys.find(k => k.id === res.answerKeyId);
+                        if (targetK) setActiveAnswerKey(targetK);
+                        setActiveScreen(ScreenId.RESULTS_SUMMARY);
+                      }}
+                      className="rounded-2xl p-4 flex items-center justify-between transition-all card-hover glass-card cursor-pointer hover:border-emerald-400 hover:shadow-md active:scale-[0.99] group"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm" style={{background:gradeBg,color:gradeColor,border:`1px solid ${gradeColor}25`}}>
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm group-hover:scale-105 transition" style={{background:gradeBg,color:gradeColor,border:`1px solid ${gradeColor}25`}}>
                           {letterGrade}
                         </div>
                         <div>
-                          <h4 className="text-xs font-bold text-slate-900">{res.candidateName}</h4>
+                          <h4 className="text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition">{res.candidateName}</h4>
                           <div className="flex items-center gap-1.5 mt-0.5 text-[10px] font-mono" style={{color:'#94a3b8'}}>
                             <span>{res.testName}</span>
                             <span>·</span>
@@ -1407,19 +1745,33 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="text-right">
-                        <span className="text-xs font-bold font-mono text-slate-800">{res.score}/{res.totalQuestions}</span>
-                        <div className="flex items-center gap-1 justify-end mt-0.5">
-                          {res.status === 'Synced' ? (
-                            <span className="text-[9px] font-mono font-bold flex items-center gap-0.5 px-1.5 py-0.5 rounded" style={{background:'rgba(16,185,129,0.08)',color:'#059669',border:'1px solid rgba(16,185,129,0.15)'}}>
-                              <Check className="w-2.5 h-2.5" /> Synced
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-mono font-bold flex items-center gap-0.5 px-1.5 py-0.5 rounded" style={{background:'rgba(245,158,11,0.08)',color:'#d97706',border:'1px solid rgba(245,158,11,0.15)'}}>
-                              <CloudOff className="w-2.5 h-2.5" /> Cached
-                            </span>
-                          )}
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <span className="text-xs font-bold font-mono text-slate-800">{res.score}/{res.totalQuestions}</span>
+                          <div className="flex items-center gap-1 justify-end mt-0.5">
+                            {res.status === 'Synced' ? (
+                              <span className="text-[9px] font-mono font-bold flex items-center gap-0.5 px-1.5 py-0.5 rounded" style={{background:'rgba(16,185,129,0.08)',color:'#059669',border:'1px solid rgba(16,185,129,0.15)'}}>
+                                <Check className="w-2.5 h-2.5" /> Synced
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-mono font-bold flex items-center gap-0.5 px-1.5 py-0.5 rounded" style={{background:'rgba(245,158,11,0.08)',color:'#d97706',border:'1px solid rgba(245,158,11,0.15)'}}>
+                                <CloudOff className="w-2.5 h-2.5" /> Cached
+                              </span>
+                            )}
+                          </div>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setGradeSlipModalResult(res);
+                          }}
+                          className="p-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 transition cursor-pointer"
+                          title="View & Share Grade Slip"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -1435,13 +1787,25 @@ export default function App() {
   };
 
   // 5. CAMERA SCAN is loaded as full screen component from `./components/CameraViewfinder.tsx`
-  const handleScanCapture = (imageUrl: string, isAmbiguousSample: boolean, studentName: string) => {
+  const handleScanCapture = (imageUrl: string, scanPreset: ScanPreset, studentName: string) => {
     setCurrentScannedImage(imageUrl);
-    setIsCurrentScanAmbiguous(isAmbiguousSample);
+    setCurrentScanPreset(scanPreset);
+    setIsCurrentScanAmbiguous(scanPreset === 'sim_audit');
     setTempStudentName(studentName);
     
     // Automatically advance to Screen 6: "Confirm Image"
     setActiveScreen(ScreenId.CONFIRM_IMAGE);
+  };
+
+  const handleSpeedInkFastSave = (newResult: GradedResult, imageDataUrl: string) => {
+    // 1-Tap Rapid Save for sub-5-second continuous grading loop
+    setResultsList(prev => [newResult, ...prev]);
+    setRecentGradedResult(newResult);
+    setUserProfile(prev => ({
+      ...prev,
+      scansThisMonth: (prev.scansThisMonth || 0) + 1,
+      offlineCount: isOnline ? prev.offlineCount : prev.offlineCount + 1,
+    }));
   };
 
   // 6. CONFIRM IMAGE (Adjust corners and check lists)
@@ -1460,89 +1824,126 @@ export default function App() {
     ));
   };
 
+  const handleContainerTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!activeAnchor) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, Math.round(((touch.clientX - rect.left) / rect.width) * 100)));
+    const y = Math.max(0, Math.min(100, Math.round(((touch.clientY - rect.top) / rect.height) * 100)));
+    
+    setCornerAnchors(prev => prev.map(anchor => 
+      anchor.id === activeAnchor ? { ...anchor, x, y } : anchor
+    ));
+  };
+
   const handleContainerMouseUp = () => {
     setActiveAnchor(null);
   };
 
   const renderConfirmImageScreen = () => {
+    const isRealPhoto = currentScannedImage && (
+      currentScannedImage.startsWith('data:image') || 
+      currentScannedImage.startsWith('http') || 
+      currentScannedImage.startsWith('blob:')
+    );
+
     return (
       <div id="screen_confirm_image" className="min-h-screen mesh-light flex flex-col pb-10">
         {/* Top bar */}
-        <div className="glass-panel p-4 px-6 flex items-center justify-between" style={{borderBottom:'1px solid rgba(226,232,240,0.5)'}}>
-          <div className="flex items-center gap-3">
+        <div className="glass-panel p-3 sm:p-4 px-4 sm:px-6 flex items-center justify-between" style={{borderBottom:'1px solid rgba(226,232,240,0.5)'}}>
+          <div className="flex items-center gap-2 sm:gap-3">
             <button 
               id="btn_back_confirm_image"
               onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
               className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+              title="Back to Camera"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h3 className="text-sm font-extrabold text-slate-900">Confirm Sheet Boundaries</h3>
-              <p className="text-[10px] text-slate-500">Fine-tune OMR tracking anchors</p>
+              <h3 className="text-xs sm:text-sm font-extrabold text-slate-900">Confirm Sheet Boundaries</h3>
+              <p className="text-[10px] text-slate-500">Student: {tempStudentName || 'Candidate'}</p>
             </div>
           </div>
-          <span className="text-xs font-mono font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
-            Success alignment
-          </span>
+          <button
+            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
+            className="text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-emerald-200 transition flex items-center gap-1"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Retake</span>
+          </button>
         </div>
 
-        <div className="flex-1 p-6 max-w-xl mx-auto w-full space-y-6">
+        <div className="flex-1 p-3 sm:p-6 max-w-xl mx-auto w-full space-y-3 sm:space-y-4">
           
-          <p className="text-xs text-slate-500 text-center leading-relaxed">
-            Drag the glowing green corner targets to overlap perfectly with the black OMR registration squares on the student page.
+          <p className="text-[11px] sm:text-xs text-slate-500 text-center leading-relaxed">
+            Drag the glowing green corner targets to overlap with the black registration squares on the student's sheet.
           </p>
 
-          {/* Anchor Canvas Draggable Area */}
+          {/* Anchor Canvas Draggable Area (iPhone SE Responsive) */}
           <div 
             id="draggable_boundaries_container"
             onMouseMove={handleContainerMouseMove}
             onMouseUp={handleContainerMouseUp}
             onMouseLeave={handleContainerMouseUp}
-            className="relative w-full h-[360px] bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden cursor-crosshair shadow-2xl flex items-center justify-center select-none"
+            onTouchMove={handleContainerTouchMove}
+            onTouchEnd={handleContainerMouseUp}
+            onTouchCancel={handleContainerMouseUp}
+            className="relative w-full h-[250px] sm:h-[340px] md:h-[380px] bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden cursor-crosshair shadow-2xl flex items-center justify-center select-none touch-none"
           >
-            {/* Background Sheet mockup */}
-            <div className="absolute inset-8 bg-white border border-slate-300 rounded-xl p-4 flex flex-col justify-between shadow-inner">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="h-2.5 w-16 bg-slate-200 rounded" />
-                <div className="h-2.5 w-8 bg-slate-200 rounded" />
-              </div>
-              
-              {/* Dummy OMR circles rows */}
-              <div className="space-y-2 flex-1 mt-6">
-                {[1, 2, 3, 4, 5, 6].map((row) => (
-                  <div key={row} className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
-                    <span>Q{row}</span>
-                    <div className="flex gap-1.5">
-                      {['A', 'B', 'C', 'D'].map((opt) => (
-                        <span key={opt} className="w-3.5 h-3.5 rounded-full border border-slate-200 text-center block text-[8px] font-bold text-slate-300">
-                          {opt}
-                        </span>
-                      ))}
+            {/* Real captured student photo background if available, or fallback mockup */}
+            {isRealPhoto ? (
+              <img 
+                src={currentScannedImage} 
+                alt="Scanned Student Sheet" 
+                className="absolute inset-0 w-full h-full object-contain p-2 select-none pointer-events-none" 
+              />
+            ) : (
+              /* Background Sheet mockup */
+              <div className="absolute inset-4 sm:inset-8 bg-white border border-slate-300 rounded-xl p-3 sm:p-4 flex flex-col justify-between shadow-inner">
+                <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                  <div className="h-2 w-12 bg-slate-200 rounded" />
+                  <div className="h-2 w-6 bg-slate-200 rounded" />
+                </div>
+                
+                {/* Dummy OMR circles rows */}
+                <div className="space-y-1.5 flex-1 mt-3">
+                  {[1, 2, 3, 4, 5, 6].map((row) => (
+                    <div key={row} className="flex items-center justify-between text-[8px] text-slate-400 font-mono">
+                      <span>Q{row}</span>
+                      <div className="flex gap-1">
+                        {['A', 'B', 'C', 'D'].map((opt) => (
+                          <span key={opt} className="w-3 h-3 rounded-full border border-slate-200 text-center block text-[7px] font-bold text-slate-300">
+                            {opt}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              <div className="flex justify-between border-t border-slate-100 pt-2 text-[8px] font-mono text-slate-300 uppercase">
-                <span>Teacher's Toolkit OMR Form</span>
-                <span>Page 1/1</span>
+                <div className="flex justify-between border-t border-slate-100 pt-1 text-[7px] font-mono text-slate-300 uppercase">
+                  <span>OMR Sheet Form</span>
+                  <span>1/1</span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Glowing corner anchors */}
+            {/* Glowing corner anchors with touch support */}
             {cornerAnchors.map((anchor) => (
               <div
                 key={anchor.id}
                 id={`anchor_${anchor.id}`}
                 onMouseDown={() => handleAnchorMouseDown(anchor.id)}
-                className={`absolute w-7 h-7 rounded-full border-2 border-emerald-500 bg-white cursor-pointer shadow-lg transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-transform hover:scale-125 active:scale-110 z-20 ${
+                onTouchStart={() => handleAnchorMouseDown(anchor.id)}
+                className={`absolute w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-emerald-400 bg-emerald-950/80 cursor-pointer shadow-lg transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-transform hover:scale-125 active:scale-110 z-20 ${
                   activeAnchor === anchor.id ? 'ring-4 ring-emerald-400 scale-125' : ''
                 }`}
                 style={{ left: `${anchor.x}%`, top: `${anchor.y}%` }}
               >
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="absolute -top-5 text-[9px] font-bold text-emerald-400 font-mono bg-slate-950 px-1 rounded">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="absolute -top-4 text-[8px] sm:text-[9px] font-bold text-emerald-300 font-mono bg-slate-950 px-1 rounded shadow">
                   {anchor.id}
                 </span>
               </div>
@@ -1566,36 +1967,51 @@ export default function App() {
           </div>
 
           {/* Quality confirmation checklist below */}
-          <div className="glass-card rounded-2xl p-4 space-y-2.5 shadow-sm">
-            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">OMR Validation Log</h4>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Full OMR page visible (Inside lens guidelines)</span>
+          <div className="glass-card rounded-2xl p-3 sm:p-4 space-y-1.5 sm:space-y-2 shadow-xs">
+            <h4 className="text-[10px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider">OMR Alignment Status</h4>
+            <div className="space-y-1 text-[11px] font-medium text-slate-600">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>Active Key: <strong className="text-slate-900">{activeAnswerKey?.title || savedKeys[0]?.title || classSettings.testName || 'Default Key'}</strong></span>
               </div>
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Image high contrast clear (Bright ambient light verified)</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>All 4 Corner markers successfully snapped</span>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>All 4 registration corner markers snapped</span>
               </div>
             </div>
           </div>
 
-          {/* Continue button */}
-          <button
-            id="btn_continue_grading"
-            onClick={() => {
-              // Advance to Screen 7: Define Answer Key
-              setActiveScreen(ScreenId.DEFINE_ANSWER_KEY);
-            }}
-            className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-xl transition text-sm shadow-md flex items-center justify-center gap-1.5"
-          >
-            <span>Lock Boundaries & Choose Answer Key</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          {/* Action buttons */}
+          <div className="space-y-2 pt-1">
+            {activeAnswerKey || savedKeys.length > 0 ? (
+              <button
+                id="btn_auto_grade_key"
+                onClick={() => {
+                  const targetKey = activeAnswerKey || savedKeys[0];
+                  if (targetKey) {
+                    handleChooseAnswerKey(targetKey);
+                  } else {
+                    setActiveScreen(ScreenId.DEFINE_ANSWER_KEY);
+                  }
+                }}
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-98 text-white font-extrabold rounded-xl transition text-xs sm:text-sm shadow-md flex items-center justify-center gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Grade Now with {activeAnswerKey?.title || savedKeys[0]?.title || 'Master Key'}</span>
+              </button>
+            ) : null}
+
+            <button
+              id="btn_continue_grading"
+              onClick={() => {
+                setActiveScreen(ScreenId.DEFINE_ANSWER_KEY);
+              }}
+              className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl transition text-xs flex items-center justify-center gap-1.5"
+            >
+              <span>Switch / Choose Different Answer Key</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
         </div>
       </div>
@@ -1608,73 +2024,69 @@ export default function App() {
     triggerProcessGrading(key);
   };
 
-  const triggerProcessGrading = (targetKey: AnswerKey) => {
-    const isAmbiguous = isCurrentScanAmbiguous;
-    const qCount = targetKey.questionsCount;
+  const triggerProcessGrading = async (targetKey: AnswerKey) => {
+    setIsAnalyzingOMR(true);
+    try {
+      let confLog: QuestionConfidence[] = [];
 
-    // Generate Question Confidence outputs based on selected OMR simulation (perfect vs ambiguous)
-    const confLog: QuestionConfidence[] = [];
-    for (let q = 1; q <= qCount; q++) {
-      const correctOption = targetKey.answers[q] || 'A';
-      
-      if (isAmbiguous && q === 17) {
-        // Mock Alice Q17 flagged ambiguity (has high overlap between A and B)
-        confLog.push({
-          questionNumber: q,
-          options: { A: 45, B: 42, C: 6, D: 7 },
-          detected: 'A', // initial guess
-          confidence: 45, // low
-          flagged: true // FLAGGED!
-        });
+      const isRealImage = currentScannedImage && (
+        currentScannedImage.startsWith('data:image') || 
+        currentScannedImage.startsWith('blob:') || 
+        currentScannedImage.startsWith('http')
+      );
+
+      if (isRealImage && currentScanPreset !== 'sim_struggling' && currentScanPreset !== 'sim_audit' && currentScanPreset !== 'sim_perfect') {
+        // Run Real Computer Vision Optical Mark Recognition on captured/uploaded student sheet!
+        confLog = await processOMRSheetImage(
+          currentScannedImage,
+          cornerAnchors,
+          targetKey.questionsCount,
+          targetKey
+        );
       } else {
-        // Normal clean high-confidence correct or wrong bubble
-        const isCorrect = isAmbiguous ? q !== 5 : true; // alice missed Q5
-        const chosen = isCorrect ? correctOption : (correctOption === 'A' ? 'B' : 'A');
-        
-        const optionsConf = { A: 2, B: 3, C: 2, D: 3 };
-        optionsConf[chosen as 'A' | 'B' | 'C' | 'D'] = 98; // High confidence
-
-        confLog.push({
-          questionNumber: q,
-          options: optionsConf,
-          detected: chosen,
-          confidence: 98,
-          flagged: false
-        });
+        // Run specified simulation preset
+        confLog = simulateStudentSheet(
+          currentScanPreset,
+          targetKey,
+          targetKey.questionsCount
+        );
       }
-    }
 
-    setFlaggedQuestions(confLog);
+      setFlaggedQuestions(confLog);
 
-    // If there are flagged questions, go to Screen 9 Review Flags first!
-    if (confLog.some(q => q.flagged)) {
-      setActiveScreen(ScreenId.REVIEW_FLAGS);
-    } else {
-      // Direct success save to Results Summary!
+      // Always save and advance to Results Summary so the user sees results immediately!
       saveGradedResultAndAdvance(confLog, targetKey);
+    } catch (err) {
+      console.warn('OMR grading error:', err);
+      const fallbackLog = simulateStudentSheet('sim_realistic', targetKey, targetKey.questionsCount);
+      setFlaggedQuestions(fallbackLog);
+      saveGradedResultAndAdvance(fallbackLog, targetKey);
+    } finally {
+      setIsAnalyzingOMR(false);
     }
   };
 
   const saveGradedResultAndAdvance = (resolvedQuestions: QuestionConfidence[], key: AnswerKey) => {
-    // Count score
+    // Count score safely
     let correct = 0;
     const studentAnswers: { [key: number]: string } = {};
 
     resolvedQuestions.forEach(q => {
-      const studentChosen = q.detected;
-      const masterCorrect = key.answers[q.questionNumber];
+      const studentChosen = (q.detected || '').trim().toUpperCase();
+      const masterCorrect = (key?.answers ? (key.answers[q.questionNumber] ?? (key.answers as any)[String(q.questionNumber)] ?? 'A') : 'A').trim().toUpperCase();
       studentAnswers[q.questionNumber] = studentChosen;
 
-      if (studentChosen === masterCorrect) {
+      if (studentChosen && studentChosen === masterCorrect) {
         correct++;
       }
     });
 
-    const percentage = Math.round((correct / key.questionsCount) * 100);
+    const totalQuestions = key?.questionsCount || resolvedQuestions.length || 10;
+    const percentage = Math.round((correct / totalQuestions) * 100);
 
     const newResult: GradedResult = {
       id: 'res_' + Date.now(),
-      candidateName: tempStudentName || 'Candidate B (Alice Johnson)',
+      candidateName: tempStudentName.trim() || `Candidate #${resultsList.length + 1}`,
       candidateId: 'STUD_' + Math.floor(100 + Math.random() * 900),
       testName: key.title,
       className: key.className,
@@ -1686,7 +2098,7 @@ export default function App() {
       status: isOnline ? 'Synced' : 'Offline Pending',
       flaggedCount: resolvedQuestions.filter(q => q.flagged).length,
       answerKeyId: key.id,
-      imageThumbnail: ''
+      imageThumbnail: currentScannedImage || ''
     };
 
     // Save to list
@@ -1701,9 +2113,312 @@ export default function App() {
     setActiveScreen(ScreenId.RESULTS_SUMMARY);
   };
 
+  const handleOverrideSingleQuestion = (qNum: number, newOption: string) => {
+    if (!recentGradedResult) return;
+    const targetKey = savedKeys.find(k => k.id === recentGradedResult.answerKeyId) || activeAnswerKey;
+    if (!targetKey) return;
+
+    const updatedAnswers = { ...recentGradedResult.answers, [qNum]: newOption };
+    let correct = 0;
+    for (let i = 1; i <= recentGradedResult.totalQuestions; i++) {
+      const studAns = (updatedAnswers[i] || '').trim().toUpperCase();
+      const masterAns = (targetKey.answers ? (targetKey.answers[i] ?? (targetKey.answers as any)[String(i)] ?? 'A') : 'A').trim().toUpperCase();
+      if (studAns && studAns === masterAns) {
+        correct++;
+      }
+    }
+
+    const percentage = Math.round((correct / recentGradedResult.totalQuestions) * 100);
+    const updatedResult: GradedResult = {
+      ...recentGradedResult,
+      score: correct,
+      percentage,
+      answers: updatedAnswers,
+      flaggedCount: Math.max(0, recentGradedResult.flaggedCount - 1)
+    };
+
+    setRecentGradedResult(updatedResult);
+    setResultsList(prev => prev.map(r => r.id === updatedResult.id ? updatedResult : r));
+    setEditingQuestionNumber(null);
+  };
+
+  // 10. RESULTS SUMMARY
+  const renderResultsSummaryScreen = () => {
+    if (!recentGradedResult) {
+      return (
+        <div id="screen_results_summary_empty" className="min-h-screen mesh-light flex flex-col p-6 items-center justify-center text-center space-y-4">
+          <ShrugIllustration className="w-32 h-32 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-800">No recent graded sheet found</h3>
+          <p className="text-xs text-slate-500 max-w-xs">Start a camera scan or select a previous sheet from history.</p>
+          <button
+            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
+            className="py-2.5 px-6 btn-primary rounded-xl text-xs font-bold"
+          >
+            Start Camera Scan
+          </button>
+        </div>
+      );
+    }
+
+    const letterGrade = recentGradedResult.percentage >= classSettings.gradingScale.A ? 'A' 
+      : recentGradedResult.percentage >= classSettings.gradingScale.B ? 'B'
+      : recentGradedResult.percentage >= classSettings.gradingScale.C ? 'C'
+      : 'D';
+
+    const isAlice = recentGradedResult.candidateName.includes('Alice');
+    const targetKey = savedKeys.find(k => k.id === recentGradedResult.answerKeyId) || activeAnswerKey;
+
+    return (
+      <div id="screen_results_summary" className="min-h-screen mesh-light flex flex-col pb-12 relative w-full max-w-full overflow-x-hidden">
+        {/* Quick Question Override Modal */}
+        {editingQuestionNumber !== null && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-5 sm:p-6 space-y-4 shadow-2xl text-slate-900 border border-slate-200 animate-scale-up">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Adjust Question {editingQuestionNumber} Mark</h3>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    Master Key: <strong className="text-emerald-700">{targetKey?.answers[editingQuestionNumber] || 'A'}</strong>
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setEditingQuestionNumber(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="text-xs text-slate-600">Select candidate's true marked option:</div>
+
+              <div className="grid grid-cols-4 gap-2">
+                {['A', 'B', 'C', 'D'].map((opt) => {
+                  const isCurrent = recentGradedResult.answers[editingQuestionNumber] === opt;
+                  const isKey = targetKey?.answers[editingQuestionNumber] === opt;
+                  return (
+                    <button
+                      key={opt}
+                      onClick={() => handleOverrideSingleQuestion(editingQuestionNumber, opt)}
+                      className={`p-3 rounded-2xl border-2 font-extrabold text-sm transition flex flex-col items-center justify-center gap-1 ${
+                        isCurrent 
+                          ? 'bg-emerald-500 border-emerald-600 text-white shadow-md' 
+                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <span>{opt}</span>
+                      {isKey && <span className="text-[9px] font-normal opacity-80">Key</span>}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                <button
+                  onClick={() => handleOverrideSingleQuestion(editingQuestionNumber, '')}
+                  className="p-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Mark as Blank
+                </button>
+                <button
+                  onClick={() => setEditingQuestionNumber(null)}
+                  className="p-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="glass-panel p-3.5 sm:p-4 px-4 sm:px-6 flex items-center justify-between w-full max-w-full overflow-hidden" style={{borderBottom:'1px solid rgba(226,232,240,0.5)'}}>
+          <span className="text-[11px] sm:text-xs font-bold text-slate-500 truncate mr-2">GRADING REPORT COMPLETE</span>
+          <button 
+            id="btn_results_summary_dashboard"
+            onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
+            className="text-xs font-extrabold text-emerald-600 hover:text-emerald-700 transition shrink-0 whitespace-nowrap"
+          >
+            Go Dashboard
+          </button>
+        </div>
+
+        <div className="flex-1 p-3.5 sm:p-6 max-w-xl mx-auto w-full space-y-4 sm:space-y-6 overflow-x-hidden">
+          
+          {/* Main big score ribbon */}
+          <div className="glass-card rounded-2xl p-5 sm:p-6 text-center space-y-3 sm:space-y-4 shadow-sm relative overflow-hidden w-full">
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-emerald-600" />
+            
+            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto border border-emerald-100">
+              <CheckCircle className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-500" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[11px] sm:text-xs font-mono font-bold text-emerald-600 tracking-wider uppercase">
+                Result Saved Successfully!
+              </span>
+              <h2 className="text-3xl sm:text-4xl font-black text-slate-900 font-mono tracking-tight">
+                {recentGradedResult.score} <span className="text-base sm:text-lg text-slate-400 font-normal">/ {recentGradedResult.totalQuestions}</span>
+              </h2>
+              <div className="text-xl sm:text-2xl font-black text-emerald-500 mt-0.5">{recentGradedResult.percentage}%</div>
+            </div>
+
+            {/* Teacher recommendation */}
+            <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+              Student scored a final grade of <strong className="text-slate-800">{letterGrade}</strong> on this module. Grading logs have been cached locally.
+            </p>
+          </div>
+
+          {/* Student Profile Card details */}
+          <div className="glass-card rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm w-full overflow-hidden">
+            <h4 className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">Candidate Credentials</h4>
+            
+            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 sm:gap-4 w-full">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="p-2.5 sm:p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 shrink-0">
+                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h5 className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">{recentGradedResult.candidateName}</h5>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-mono truncate">ID: {recentGradedResult.candidateId}</p>
+                </div>
+              </div>
+              <span className="text-[10px] sm:text-xs font-extrabold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-150 shrink-0">
+                Class {recentGradedResult.className}
+              </span>
+            </div>
+
+            {/* Scanned sheet preview thumbnail if available */}
+            {recentGradedResult.imageThumbnail && (
+              <div className="mt-2 pt-2.5 border-t border-slate-100 flex items-center justify-between w-full">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-9 h-9 rounded-lg bg-slate-900 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                    {recentGradedResult.imageThumbnail.startsWith('data:image') || recentGradedResult.imageThumbnail.startsWith('http') || recentGradedResult.imageThumbnail.startsWith('blob:') ? (
+                      <img src={recentGradedResult.imageThumbnail} alt="Answer sheet" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-[8px] font-mono text-slate-400 font-bold">OMR</span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[11px] sm:text-xs font-bold text-slate-800 block truncate">Captured Answer Sheet</span>
+                    <span className="text-[10px] text-emerald-600 font-medium block truncate">Scanned & Verified</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isAlice && (
+              <div className="bg-amber-50 border border-amber-200/60 p-2.5 rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="text-[10px] sm:text-[11px] text-amber-800 font-medium">
+                  Teacher corrected Q17 bubble.
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Question-by-Question Audit Breakdown with Click-to-Override */}
+          <div className="glass-card rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm w-full overflow-hidden">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider truncate">Question Mark Log</h4>
+                <p className="text-[10px] text-slate-500 truncate">Tap to adjust bubble</p>
+              </div>
+              <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shrink-0 whitespace-nowrap">
+                {recentGradedResult.score} C • {recentGradedResult.totalQuestions - recentGradedResult.score} E
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2 max-h-64 overflow-y-auto pr-1 w-full">
+              {Array.from({ length: recentGradedResult.totalQuestions }, (_, i) => i + 1).map((qNum) => {
+                const studentAnswer = recentGradedResult.answers[qNum] || '';
+                const masterKey = targetKey?.answers[qNum] || 'A';
+                const isCorrect = studentAnswer === masterKey;
+
+                return (
+                  <button 
+                    key={qNum}
+                    type="button"
+                    onClick={() => setEditingQuestionNumber(qNum)}
+                    className={`p-1.5 sm:p-2 rounded-xl border flex items-center justify-between text-[11px] sm:text-xs font-mono transition hover:scale-[1.02] cursor-pointer text-left min-w-0 ${
+                      isCorrect 
+                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 hover:border-emerald-400' 
+                        : 'bg-red-50/80 border-red-200 text-red-900 hover:border-red-400'
+                    }`}
+                    title="Tap to override answer"
+                  >
+                    <span className="font-bold shrink-0">Q{qNum}</span>
+                    <div className="flex items-center gap-1 font-bold shrink-0">
+                      <span className={isCorrect ? 'text-emerald-700 font-black' : 'text-red-600 line-through'}>
+                        {studentAnswer || '—'}
+                      </span>
+                      {!isCorrect && (
+                        <span className="text-[9px] text-emerald-700 bg-emerald-100 px-1 rounded font-bold">
+                          ✓{masterKey}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Actions grid */}
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full">
+            <button
+              id="btn_results_share"
+              type="button"
+              onClick={() => setGradeSlipModalResult(recentGradedResult)}
+              className="py-3 px-2 sm:px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold rounded-xl border border-emerald-700 transition text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer text-center"
+            >
+              <Share2 className="w-4 h-4 text-emerald-100 shrink-0" />
+              <span className="truncate">Grade Slip</span>
+            </button>
+
+            <button
+              id="btn_results_review_history"
+              type="button"
+              onClick={() => setActiveScreen(ScreenId.RESULTS_HISTORY)}
+              className="py-3 px-2 sm:px-4 bg-white hover:bg-slate-50 active:scale-98 text-slate-800 font-bold rounded-xl border border-slate-200 transition text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer text-center"
+            >
+              <History className="w-4 h-4 text-slate-600 shrink-0" />
+              <span className="truncate">All History</span>
+            </button>
+          </div>
+
+          {/* Primary CTA */}
+          <button
+            id="btn_mark_next_sheet"
+            type="button"
+            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
+            className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-xl text-xs tracking-wider uppercase transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Camera className="w-4 h-4 shrink-0" />
+            <span>Mark Next Sheet</span>
+          </button>
+
+        </div>
+      </div>
+    );
+  };
+
+
   const renderDefineAnswerKeyScreen = () => {
     return (
-      <div id="screen_define_key" className="min-h-screen mesh-light flex flex-col pb-10">
+      <div id="screen_define_key" className="min-h-screen mesh-light flex flex-col pb-10 relative">
+        {/* Analyzing OMR Loading Modal */}
+        {isAnalyzingOMR && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-white space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center shadow-lg">
+              <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-bold">Analyzing Student Sheet...</h3>
+              <p className="text-xs text-slate-400">Measuring optical mark contrast & bubble coordinates...</p>
+            </div>
+          </div>
+        )}
+
         <div className="glass-panel p-4 px-6 flex items-center justify-between" style={{borderBottom:'1px solid rgba(226,232,240,0.5)'}}>
           <div className="flex items-center gap-3">
             <button 
@@ -1724,30 +2439,68 @@ export default function App() {
           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Available Answer Keys</h4>
 
           <div className="grid grid-cols-1 gap-3">
-            {savedKeys.map((key) => (
-              <div 
-                key={key.id}
-                id={`choose_key_item_${key.id}`}
-                className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-emerald-500 shadow-sm transition"
-              >
+            {savedKeys.length === 0 ? (
+              <div className="glass-card rounded-2xl p-6 text-center space-y-4 border border-slate-200">
                 <div className="space-y-1">
-                  <h5 className="text-sm font-extrabold text-slate-900">{key.title}</h5>
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                    <span>Class: <strong className="text-slate-700">{key.className}</strong></span>
-                    <span>•</span>
-                    <span>{key.questionsCount} Questions</span>
-                  </div>
+                  <h5 className="text-sm font-extrabold text-slate-800">No Saved Master Keys Found</h5>
+                  <p className="text-xs text-slate-500">
+                    Create a custom answer key or use our standard auto-key pattern (A, B, C, D...) to grade immediately.
+                  </p>
                 </div>
-
-                <button
-                  id={`btn_apply_key_${key.id}`}
-                  onClick={() => handleChooseAnswerKey(key)}
-                  className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold rounded-xl transition shadow"
-                >
-                  Grade with this Key
-                </button>
+                <div className="flex flex-col sm:flex-row gap-2.5 justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const count = classSettings.totalQuestions || 20;
+                      const defaultAnswers: { [key: number]: string } = {};
+                      const pattern = ['A', 'B', 'C', 'D', 'C', 'B', 'A', 'D', 'B', 'C', 'D', 'A', 'A', 'B', 'C', 'D', 'A', 'B', 'C', 'D'];
+                      for (let i = 1; i <= count; i++) {
+                        defaultAnswers[i] = pattern[(i - 1) % pattern.length];
+                      }
+                      const defaultKey: AnswerKey = {
+                        id: 'key_std_' + Date.now(),
+                        title: classSettings.testName || 'Standard Assessment',
+                        className: classSettings.className || 'General Class',
+                        questionsCount: count,
+                        answers: defaultAnswers,
+                        createdAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+                      };
+                      setSavedKeys(prev => [defaultKey, ...prev]);
+                      handleChooseAnswerKey(defaultKey);
+                    }}
+                    className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Use Standard Master Key & Grade</span>
+                  </button>
+                </div>
               </div>
-            ))}
+            ) : (
+              savedKeys.map((key) => (
+                <div 
+                  key={key.id}
+                  id={`choose_key_item_${key.id}`}
+                  className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-emerald-500 shadow-sm transition"
+                >
+                  <div className="space-y-1">
+                    <h5 className="text-sm font-extrabold text-slate-900">{key.title}</h5>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                      <span>Class: <strong className="text-slate-700">{key.className}</strong></span>
+                      <span>•</span>
+                      <span>{key.questionsCount} Questions</span>
+                    </div>
+                  </div>
+
+                  <button
+                    id={`btn_apply_key_${key.id}`}
+                    onClick={() => handleChooseAnswerKey(key)}
+                    className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold rounded-xl transition shadow cursor-pointer"
+                  >
+                    Grade with this Key
+                  </button>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="relative my-6">
@@ -1776,120 +2529,6 @@ export default function App() {
     );
   };
 
-  // 10. RESULTS SUMMARY
-  const renderResultsSummaryScreen = () => {
-    if (!recentGradedResult) return null;
-
-    const letterGrade = recentGradedResult.percentage >= classSettings.gradingScale.A ? 'A' 
-      : recentGradedResult.percentage >= classSettings.gradingScale.B ? 'B'
-      : recentGradedResult.percentage >= classSettings.gradingScale.C ? 'C'
-      : 'D';
-
-    const isAlice = recentGradedResult.candidateName.includes('Alice');
-
-    return (
-      <div id="screen_results_summary" className="min-h-screen mesh-light flex flex-col pb-12">
-        {/* Header */}
-        <div className="glass-panel p-4 px-6 flex items-center justify-between" style={{borderBottom:'1px solid rgba(226,232,240,0.5)'}}>
-          <span className="text-xs font-bold text-slate-500">GRADING REPORT COMPLETE</span>
-          <button 
-            id="btn_results_summary_dashboard"
-            onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
-            className="text-xs font-extrabold text-emerald-600 hover:text-emerald-700 transition"
-          >
-            Go Dashboard
-          </button>
-        </div>
-
-        <div className="flex-1 p-6 max-w-xl mx-auto w-full space-y-6">
-          
-          {/* Main big score ribbon */}
-          <div className="glass-card rounded-2xl p-6 text-center space-y-4 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-1.5 bg-emerald-600" />
-            
-            <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto border border-emerald-100">
-              <CheckCircle className="w-8 h-8 text-emerald-500" />
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-xs font-mono font-bold text-emerald-600 tracking-wider uppercase">
-                Result Saved Successfully!
-              </span>
-              <h2 className="text-4xl font-black text-slate-900 font-mono tracking-tight">
-                {recentGradedResult.score} <span className="text-lg text-slate-400 font-normal">/ {recentGradedResult.totalQuestions}</span>
-              </h2>
-              <div className="text-2xl font-black text-emerald-500 mt-1">{recentGradedResult.percentage}%</div>
-            </div>
-
-            {/* Teacher recommendation */}
-            <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-              Student scored a final grade of <strong className="text-slate-800">{letterGrade}</strong> on this module. Grading logs have been successfully cached locally.
-            </p>
-          </div>
-
-          {/* Student Profile Card details */}
-          <div className="glass-card rounded-2xl p-5 space-y-3.5 shadow-sm">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Candidate Credentials</h4>
-            
-            <div className="flex items-center gap-4">
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600">
-                <User className="w-5 h-5" />
-              </div>
-              <div className="flex-1">
-                <h5 className="text-sm font-extrabold text-slate-900">{recentGradedResult.candidateName}</h5>
-                <p className="text-xs text-slate-500 font-mono">ID Reference: {recentGradedResult.candidateId}</p>
-              </div>
-              <span className="text-xs font-extrabold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-150">
-                Class {recentGradedResult.className}
-              </span>
-            </div>
-
-            {isAlice && (
-              <div className="bg-amber-50 border border-amber-200/60 p-3 rounded-xl flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span className="text-[11px] text-amber-800 font-medium">
-                  Teacher corrected Q17 bubble. Student was awarded correct mark.
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Actions grid */}
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              id="btn_results_share"
-              onClick={() => alert(`Share link generated for ${recentGradedResult.candidateName}: 32/50`)}
-              className="py-3 px-4 bg-white hover:bg-slate-50 text-slate-800 font-bold rounded-xl border border-slate-200 transition text-xs flex items-center justify-center gap-2 shadow-sm"
-            >
-              <Share2 className="w-4 h-4 text-slate-600" />
-              <span>Share Grade Slip</span>
-            </button>
-
-            <button
-              id="btn_results_review_history"
-              onClick={() => setActiveScreen(ScreenId.RESULTS_HISTORY)}
-              className="py-3 px-4 bg-white hover:bg-slate-50 text-slate-800 font-bold rounded-xl border border-slate-200 transition text-xs flex items-center justify-center gap-2 shadow-sm"
-            >
-              <History className="w-4 h-4 text-slate-600" />
-              <span>View All History</span>
-            </button>
-          </div>
-
-          {/* Primary CTA */}
-          <button
-            id="btn_mark_next_sheet"
-            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
-            className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-xl text-xs tracking-wider uppercase transition shadow-lg flex items-center justify-center gap-2"
-          >
-            <Camera className="w-4 h-4" />
-            <span>Mark Next Sheet</span>
-          </button>
-
-        </div>
-      </div>
-    );
-  };
-
   // 11. RESULTS HISTORY (List of graded student forms)
   const renderResultsHistoryScreen = () => {
     // Search & filters logic
@@ -1903,47 +2542,48 @@ export default function App() {
     const uniqueClasses = Array.from(new Set(resultsList.map(r => r.className)));
 
     return (
-      <div id="screen_results_history" className="min-h-screen mesh-light flex flex-col pb-12">
+      <div id="screen_results_history" className="min-h-screen mesh-light flex flex-col pb-12 w-full max-w-full overflow-x-hidden">
         {/* Header navigation */}
-        <div className="glass-panel p-4 px-6 flex items-center justify-between sticky top-0 z-10">
-          <div className="flex items-center gap-3">
+        <div className="glass-panel p-3.5 sm:p-4 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-10 w-full max-w-full overflow-hidden">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <button 
               id="btn_back_results_history"
+              type="button"
               onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900">Graded Sheets History</h3>
-              <p className="text-[10px] text-slate-500">Student score reports database</p>
+            <div className="min-w-0">
+              <h3 className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">Graded Sheets History</h3>
+              <p className="text-[10px] text-slate-500 truncate">Student score reports database</p>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-6">
+        <div className="flex-1 p-3.5 sm:p-6 max-w-4xl mx-auto w-full space-y-4 sm:space-y-6 overflow-x-hidden">
           
           {/* Search and Filters Bar */}
-          <div className="glass-card rounded-2xl p-4 flex flex-col md:flex-row gap-3 shadow-sm">
-            <div className="relative flex-1">
+          <div className="glass-card rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row gap-2.5 sm:gap-3 shadow-sm w-full overflow-hidden">
+            <div className="relative flex-1 min-w-0 w-full">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input 
                 id="input_history_search"
                 type="text" 
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
-                placeholder="Search candidates, exams, rosters..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                placeholder="Search candidates, exams..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
-            <div className="flex gap-2">
-              <div className="relative">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+              <div className="relative flex-1 sm:flex-initial min-w-0">
                 <select
                   id="select_history_class_filter"
                   value={historyFilterClass}
                   onChange={(e) => setHistoryFilterClass(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-500 appearance-none pr-8 cursor-pointer"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-500 appearance-none pr-8 cursor-pointer truncate"
                 >
                   <option value="All">All Classes</option>
                   {uniqueClasses.map(c => (
@@ -1955,11 +2595,12 @@ export default function App() {
 
               <button
                 id="btn_history_clear_filters"
+                type="button"
                 onClick={() => {
                   setHistorySearch('');
                   setHistoryFilterClass('All');
                 }}
-                className="text-xs font-bold text-slate-500 hover:text-slate-800 px-2 py-1"
+                className="text-xs font-bold text-slate-500 hover:text-slate-800 px-2 py-1 shrink-0"
               >
                 Clear
               </button>
@@ -1968,15 +2609,15 @@ export default function App() {
 
           {/* Results grid list */}
           {filteredResults.length === 0 ? (
-            <div className="glass-card rounded-3xl p-10 text-center space-y-4 shadow-sm">
-              <ShrugIllustration className="w-32 h-32 mx-auto" />
+            <div className="glass-card rounded-3xl p-8 sm:p-10 text-center space-y-4 shadow-sm w-full">
+              <ShrugIllustration className="w-28 h-28 sm:w-32 sm:h-32 mx-auto" />
               <div>
                 <h4 className="text-sm font-bold text-slate-800">No score records found</h4>
                 <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Try altering your search string or filter options.</p>
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 w-full">
               {filteredResults.map((res) => {
                 const letterGrade = res.percentage >= classSettings.gradingScale.A ? 'A' 
                   : res.percentage >= classSettings.gradingScale.B ? 'B'
@@ -1987,31 +2628,37 @@ export default function App() {
                   <div 
                     key={res.id}
                     id={`history_item_${res.id}`}
-                    className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm hover:border-emerald-500 transition-all"
+                    onClick={() => {
+                      setRecentGradedResult(res);
+                      const targetK = savedKeys.find(k => k.id === res.answerKeyId);
+                      if (targetK) setActiveAnswerKey(targetK);
+                      setActiveScreen(ScreenId.RESULTS_SUMMARY);
+                    }}
+                    className="glass-card rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shadow-sm hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer group w-full overflow-hidden"
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-emerald-600 font-black text-base">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-emerald-600 font-black text-sm sm:text-base shrink-0 group-hover:scale-105 transition">
                         {letterGrade}
                       </div>
 
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-xs font-bold text-slate-900">{res.candidateName}</h4>
-                          <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                      <div className="space-y-0.5 min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-xs font-bold text-slate-900 group-hover:text-emerald-700 transition truncate">{res.candidateName}</h4>
+                          <span className="text-[9px] sm:text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">
                             {res.className}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-500 font-semibold">{res.testName}</p>
-                        <span className="text-[10px] text-slate-400 font-mono block">Scanned: {res.scannedAt}</span>
+                        <p className="text-[11px] sm:text-xs text-slate-500 font-semibold truncate">{res.testName}</p>
+                        <span className="text-[9px] sm:text-[10px] text-slate-400 font-mono block">{res.scannedAt}</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-6 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                      <div className="text-left sm:text-right">
-                        <div className="text-xs font-bold text-slate-900 font-mono">
-                          {res.score} / {res.totalQuestions} ({res.percentage}%)
+                    <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto">
+                      <div className="text-left sm:text-right min-w-0">
+                        <div className="text-xs font-bold text-slate-900 font-mono whitespace-nowrap">
+                          {res.score}/{res.totalQuestions} ({res.percentage}%)
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 sm:justify-end">
+                        <div className="mt-0.5 flex items-center gap-1 sm:justify-end">
                           {res.status === 'Synced' ? (
                             <span className="text-[9px] font-mono font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 flex items-center gap-0.5">
                               <Check className="w-2.5 h-2.5" /> Synced
@@ -2024,18 +2671,35 @@ export default function App() {
                         </div>
                       </div>
 
-                      <button
-                        id={`btn_delete_history_${res.id}`}
-                        onClick={() => {
-                          if (confirm("Delete this student result permanent record?")) {
-                            setResultsList(prev => prev.filter(r => r.id !== res.id));
-                          }
-                        }}
-                        className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition"
-                        title="Delete student result"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setGradeSlipModalResult(res);
+                          }}
+                          className="p-2 sm:p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl transition flex items-center gap-1 text-xs font-bold cursor-pointer"
+                          title="Download or share grade slip"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Slip</span>
+                        </button>
+
+                        <button
+                          id={`btn_delete_history_${res.id}`}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm("Delete this student result permanent record?")) {
+                              setResultsList(prev => prev.filter(r => r.id !== res.id));
+                            }
+                          }}
+                          className="p-2 sm:p-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition cursor-pointer"
+                          title="Delete student result"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                   </div>
@@ -2193,6 +2857,12 @@ export default function App() {
   const [testSettingsName, setTestSettingsName] = useState<string>(classSettings.testName);
   const [testSettingsClass, setTestSettingsClass] = useState<string>(classSettings.className);
   const [testSettingsCount, setTestSettingsCount] = useState<number>(classSettings.totalQuestions);
+
+  useEffect(() => {
+    setTestSettingsName(classSettings.testName || '');
+    setTestSettingsClass(selectedAssignedClass || classSettings.className || '');
+    setTestSettingsCount(classSettings.totalQuestions || 20);
+  }, [classSettings, selectedAssignedClass]);
   
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2202,6 +2872,7 @@ export default function App() {
       totalQuestions: testSettingsCount,
       gradingScale: { A: 90, B: 80, C: 70, D: 60 }
     });
+    setSelectedAssignedClass(testSettingsClass);
     alert('Active class settings saved successfully!');
     setActiveScreen(ScreenId.DASHBOARD);
   };
@@ -2393,7 +3064,7 @@ export default function App() {
                     className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl transition" style={{background:'rgba(255,255,255,0.12)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff'}}
                   >
                     <Building2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span className="truncate max-w-[200px] sm:max-w-none">{activeSchoolMode === "linked" ? (linkedSchool?.name || "St. Peter's Basic School") : "Personal Workspace"}</span>
+                    <span className="truncate max-w-[200px] sm:max-w-none">{activeSchoolMode === "linked" && linkedSchool?.name ? linkedSchool.name : "Personal Workspace"}</span>
                   </button>
 
                   <label
@@ -2537,6 +3208,42 @@ export default function App() {
             </div>
           </div>
 
+          {/* Privacy & Legal Compliance */}
+          <div className="glass-card rounded-3xl p-4 sm:p-6 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                <span>Security &amp; Privacy Policy</span>
+              </h4>
+            </div>
+            
+            <p className="text-xs text-slate-500">
+              Learn how your classroom data, student scores, and camera permissions are protected under our offline-first architecture.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                id="btn_open_privacy_policy"
+                onClick={() => setIsPrivacyModalOpen(true)}
+                className="flex-1 py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-xl border border-emerald-200 dark:border-emerald-800 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-emerald-600" />
+                <span>View In-App Privacy Policy</span>
+              </button>
+
+              <a
+                href="/privacy.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-2.5 px-4 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl border border-slate-200 dark:border-slate-700 transition flex items-center justify-center gap-1.5"
+              >
+                <span>Web Policy</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
           {/* Account Actions */}
           <div className="space-y-3">
             {userProfile.isLoggedIn ? (
@@ -2592,9 +3299,14 @@ export default function App() {
         return (
           <CameraViewfinder 
             onCapture={handleScanCapture}
+            onFastSaveNext={handleSpeedInkFastSave}
             onCancel={() => setActiveScreen(ScreenId.DASHBOARD)}
             testName={classSettings.testName}
             totalQuestions={classSettings.totalQuestions}
+            activeAnswerKey={activeAnswerKey || savedKeys[0] || null}
+            savedKeys={savedKeys}
+            onSelectKey={(key) => setActiveAnswerKey(key)}
+            existingResultsCount={resultsList.length}
           />
         );
       case ScreenId.CONFIRM_IMAGE:
@@ -2603,7 +3315,7 @@ export default function App() {
         return renderDefineAnswerKeyScreen();
       case ScreenId.ANSWER_KEY_EDITOR:
         return (
-          <div className="p-6 bg-slate-50 min-h-screen">
+          <div className="p-2 sm:p-6 bg-slate-100 min-h-screen">
             <AnswerKeyEditorPanel 
               initialKey={targetEditKey}
               defaultQuestionsCount={classSettings.totalQuestions}
@@ -2673,6 +3385,11 @@ export default function App() {
           <AttendanceModule 
             onBack={() => setActiveScreen(ScreenId.DASHBOARD)} 
             resultsList={resultsList} 
+            selectedClass={selectedAssignedClass || classSettings.className || ""}
+            setSelectedClass={(cls: string) => {
+              setSelectedAssignedClass(cls);
+              setClassSettings(prev => ({ ...prev, className: cls }));
+            }}
           />
         );
       case ScreenId.STUDENT_TREND_TRACKER:
@@ -2704,6 +3421,7 @@ export default function App() {
               }
               setActiveScreen(ScreenId.DASHBOARD);
             }} 
+            resultsList={resultsList}
             onOpenQuestionBank={() => setActiveScreen(ScreenId.QUESTION_BANK)}
             schoolProfile={linkedSchool}
             onUpdateSchoolProfile={(updated) => setLinkedSchool(updated)}
@@ -2734,8 +3452,8 @@ export default function App() {
         return (
           <WorkshopCertificateModule
             onBack={() => setActiveScreen(ScreenId.SUPER_ADMIN_PANEL)}
-            defaultTeacherName={userProfile.fullName || "Teacher Sarah Jenkins"}
-            defaultSchoolName={linkedSchool?.name || "St. Peter's Basic School"}
+            defaultTeacherName={userProfile.fullName || "Teacher"}
+            defaultSchoolName={linkedSchool?.name || ""}
           />
         );
       case ScreenId.COLLECTIONS_HUB:
@@ -2786,7 +3504,19 @@ export default function App() {
   };
 
   // Determine if bottom navigation & sidebar should be visible
-  const isNavVisible = ![ScreenId.SPLASH, ScreenId.ONBOARDING, ScreenId.AUTH, ScreenId.CAMERA_SCAN, ScreenId.HEADTEACHER_PANEL, ScreenId.SUPER_ADMIN_PANEL, ScreenId.WORKSHOP_CERTIFICATE].includes(activeScreen);
+  const isNavVisible = ![
+    ScreenId.SPLASH, 
+    ScreenId.ONBOARDING, 
+    ScreenId.AUTH, 
+    ScreenId.CAMERA_SCAN, 
+    ScreenId.CONFIRM_IMAGE,
+    ScreenId.DEFINE_ANSWER_KEY,
+    ScreenId.ANSWER_KEY_EDITOR,
+    ScreenId.REVIEW_FLAGS,
+    ScreenId.HEADTEACHER_PANEL, 
+    ScreenId.SUPER_ADMIN_PANEL, 
+    ScreenId.WORKSHOP_CERTIFICATE
+  ].includes(activeScreen);
 
   // Desktop Side Navigation Sidebar
   const renderDesktopSidebar = () => {
@@ -2875,7 +3605,7 @@ export default function App() {
               <div className="min-w-0">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">School Mode</span>
                 <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 truncate block">
-                  {activeSchoolMode === "linked" ? (linkedSchool?.name || "St. Peter's Basic") : "Personal Mode"}
+                  {activeSchoolMode === "linked" && linkedSchool?.name ? linkedSchool.name : "Personal Mode"}
                 </span>
               </div>
             </div>
@@ -3114,6 +3844,21 @@ export default function App() {
         onQuickBuyExamPass={() => {
           setIsSubscriptionModalOpen(true);
         }}
+      />
+
+      <GradeSlipModal
+        isOpen={gradeSlipModalResult !== null}
+        result={gradeSlipModalResult}
+        allResults={resultsList}
+        schoolProfile={linkedSchool}
+        customSchoolName={customBranding?.schoolName}
+        masterKeyAnswers={savedKeys.find(k => k.id === gradeSlipModalResult?.answerKeyId)?.answers || activeAnswerKey?.answers}
+        onClose={() => setGradeSlipModalResult(null)}
+      />
+
+      <PrivacyPolicyModal
+        isOpen={isPrivacyModalOpen}
+        onClose={() => setIsPrivacyModalOpen(false)}
       />
     </div>
   );

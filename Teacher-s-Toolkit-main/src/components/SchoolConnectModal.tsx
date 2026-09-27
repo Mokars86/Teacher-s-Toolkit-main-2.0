@@ -29,44 +29,14 @@ interface SchoolConnectModalProps {
   onUpdateBranding?: (branding: { schoolName: string; address: string; motto: string; logoUrl: string }) => void;
 }
 
-const MOCK_SCHOOL_DIRECTORY: SchoolProfile[] = [
-  {
-    id: "SCH_001",
-    name: "St. Peter's Basic School",
-    code: "SCH-GH-8821",
-    region: "Greater Accra Region",
-    address: "P.O. Box 42, Osu, Accra",
-    motto: "Excellence and Integrity",
-    headteacherName: "Rev. Dr. Emmanuel Mensah",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 480,
-    totalTeachers: 18,
-  },
-  {
-    id: "SCH_002",
-    name: "Achimota Preparatory & Basic",
-    code: "SCH-GH-4412",
-    region: "Greater Accra Region",
-    address: "P.O. Box 101, Achimota, Accra",
-    motto: "Ut Sint Unum",
-    headteacherName: "Mrs. Evelyn Quaye",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 620,
-    totalTeachers: 24,
-  },
-  {
-    id: "SCH_003",
-    name: "Prempeh College Basic Department",
-    code: "SCH-GH-9903",
-    region: "Ashanti Region",
-    address: "Sofoline, Kumasi",
-    motto: "Suban Ne Nyansapo",
-    headteacherName: "Mr. Baffour Awuah",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 550,
-    totalTeachers: 20,
+const INITIAL_SCHOOL_DIRECTORY: SchoolProfile[] = (() => {
+  try {
+    const cached = localStorage.getItem("omr_schools_directory");
+    return cached ? JSON.parse(cached) : [];
+  } catch {
+    return [];
   }
-];
+})();
 
 export function SchoolConnectModal({
   isOpen,
@@ -102,7 +72,7 @@ export function SchoolConnectModal({
 
   if (!isOpen) return null;
 
-  const filteredSchools = MOCK_SCHOOL_DIRECTORY.filter(s => 
+  const filteredSchools = INITIAL_SCHOOL_DIRECTORY.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.region.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.code.toLowerCase().includes(searchQuery.toLowerCase())
@@ -110,25 +80,24 @@ export function SchoolConnectModal({
 
   const handleLinkSchoolCode = (e: React.FormEvent) => {
     e.preventDefault();
-    const match = MOCK_SCHOOL_DIRECTORY.find(s => s.code.toUpperCase() === schoolCodeInput.trim().toUpperCase());
+    const match = INITIAL_SCHOOL_DIRECTORY.find(s => s.code.toUpperCase() === schoolCodeInput.trim().toUpperCase());
     if (match) {
       handleLink(match);
       handleModeToggle("linked");
       alert(`Successfully linked workspace to ${match.name}!`);
       onClose();
     } else {
-      // Default fallback mock connection
       const newLinked: SchoolProfile = {
-        id: "SCH_CUSTOM",
-        name: "St. Peter's Basic School",
-        code: schoolCodeInput.trim().toUpperCase() || "SCH-GH-8821",
-        region: "Greater Accra Region",
-        address: "P.O. Box 42, Osu, Accra",
-        motto: "Excellence & Integrity",
-        headteacherName: "Rev. Dr. Emmanuel Mensah",
-        academicTerm: "Term 2 - 2025/2026",
-        totalStudents: 480,
-        totalTeachers: 18,
+        id: `SCH_${Date.now()}`,
+        name: `School (${schoolCodeInput.trim().toUpperCase()})`,
+        code: schoolCodeInput.trim().toUpperCase(),
+        region: "",
+        address: "",
+        motto: "",
+        headteacherName: "",
+        academicTerm: "Current Academic Term",
+        totalStudents: 0,
+        totalTeachers: 0,
       };
       handleLink(newLinked);
       handleModeToggle("linked");

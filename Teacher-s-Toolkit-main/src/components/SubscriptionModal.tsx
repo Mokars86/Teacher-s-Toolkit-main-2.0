@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   X, CheckCircle2, Sparkles, ShieldCheck, Zap, MessageSquare, Building2, 
   CreditCard, Smartphone, Check, Loader2, RefreshCw, AlertCircle, Award, 
-  ChevronRight, Calendar, ArrowRight, ShieldAlert, Ticket, Coffee, Heart, Gift, Share2
+  ChevronRight, Calendar, ArrowRight, ShieldAlert, Ticket, Coffee, Heart, Gift, Share2, Lock
 } from 'lucide-react';
 import { UserProfile, MobileMoneyProvider, PaymentTransaction } from '../types';
 import { 
@@ -11,6 +11,8 @@ import {
   LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, validateAndRedeemVoucher,
   REDEEM_POINT_COSTS, redeemPointsForPlan, getReferralLink
 } from '../services/subscriptionService';
+import { launchPaystackPayment, PAYSTACK_PUBLIC_KEY } from '../services/paystackService';
+import { dbService } from '../services/supabaseClient';
 
 interface SubscriptionModalProps {
   isOpen: boolean;
@@ -52,22 +54,19 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   } | null>(null);
 
   const [selectedProvider, setSelectedProvider] = useState<MobileMoneyProvider>('MTN MoMo');
-  const [momoPhoneNumber, setMomoPhoneNumber] = useState('0244123456');
+  const [momoPhoneNumber, setMomoPhoneNumber] = useState('');
+  const [payerEmail, setPayerEmail] = useState<string>(userProfile.email || '');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessTx, setPaymentSuccessTx] = useState<PaymentTransaction | null>(null);
   
-  const [paymentHistory, setPaymentHistory] = useState<PaymentTransaction[]>([
-    {
-      id: 'tx_init_1',
-      planOrItemTitle: 'Initial School Account Setup',
-      amountGHS: 0,
-      provider: 'MTN MoMo',
-      phoneNumber: '0244123456',
-      date: 'Aug 1, 2026',
-      status: 'completed',
-      reference: 'GH-MOMO-INIT',
+  const [paymentHistory, setPaymentHistory] = useState<PaymentTransaction[]>(() => {
+    try {
+      const cached = localStorage.getItem('omr_payment_history');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
     }
-  ]);
+  });
 
   if (!isOpen) return null;
 
@@ -76,51 +75,71 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   const handleStartCheckout = (item: typeof checkoutItem) => {
     setCheckoutItem(item);
     setPaymentSuccessTx(null);
+    setPayerEmail(userProfile.email || '');
   };
 
   const handleExecutePayment = async () => {
     if (!checkoutItem) return;
     setIsProcessingPayment(true);
 
-    try {
-      const tx = await processMoMoPayment(
-        checkoutItem.title,
-        checkoutItem.amountGHS,
-        selectedProvider,
-        momoPhoneNumber
-      );
+    const emailToUse = payerEmail.trim() || userProfile.email || 'teacher@teachers-toolkit.app';
 
-      // Apply benefits to user profile
-      if (checkoutItem.type === 'plan' && checkoutItem.planId) {
-        onUpdateProfile({
-          activeSubscriptionPlan: checkoutItem.planId,
-          isPremium: checkoutItem.planId !== 'Free',
-        });
-      } else if (checkoutItem.type === 'pass' && checkoutItem.passDays) {
-        const expiry = new Date();
-        expiry.setDate(expiry.getDate() + checkoutItem.passDays);
-        onUpdateProfile({
-          endOfTermPassExpiry: expiry.toISOString(),
-          isPremium: true,
-        });
-      } else if (checkoutItem.type === 'sms' && checkoutItem.smsAmount) {
-        onUpdateProfile({
-          smsCredits: (userProfile.smsCredits || 0) + checkoutItem.smsAmount,
-        });
-      } else if (checkoutItem.type === 'donation') {
-        const bonusPoints = Math.round(checkoutItem.amountGHS * 10);
-        onUpdateProfile({
-          rewardPoints: (userProfile.rewardPoints || 0) + bonusPoints,
-        });
-      }
+    await launchPaystackPayment({
+      email: emailToUse,
+      amountGHS: checkoutItem.amountGHS,
+      itemTitle: checkoutItem.title,
+      planId: checkoutItem.planId,
+      phone: momoPhoneNumber.trim(),
+      provider: selectedProvider,
+      metadata: {
+        userId: userProfile.email,
+        customerName: userProfile.fullName,
+        role: userProfile.role,
+      },
+      onSuccess: async (tx) => {
+        // Apply benefits to user profile
+        const profileUpdates: Partial<UserProfile> = {};
+        if (checkoutItem.type === 'plan' && checkoutItem.planId) {
+          profileUpdates.activeSubscriptionPlan = checkoutItem.planId;
+          profileUpdates.isPremium = checkoutItem.planId !== 'Free';
+        } else if (checkoutItem.type === 'pass' && checkoutItem.passDays) {
+          const expiry = new Date();
+          expiry.setDate(expiry.getDate() + checkoutItem.passDays);
+          profileUpdates.endOfTermPassExpiry = expiry.toISOString();
+          profileUpdates.isPremium = true;
+        } else if (checkoutItem.type === 'sms' && checkoutItem.smsAmount) {
+          profileUpdates.smsCredits = (userProfile.smsCredits || 0) + checkoutItem.smsAmount;
+        } else if (checkoutItem.type === 'donation') {
+          const bonusPoints = Math.round(checkoutItem.amountGHS * 10);
+          profileUpdates.rewardPoints = (userProfile.rewardPoints || 0) + bonusPoints;
+        }
 
-      setPaymentHistory((prev) => [tx, ...prev]);
-      setPaymentSuccessTx(tx);
-    } catch (err) {
-      alert("Payment processing failed. Please try again.");
-    } finally {
-      setIsProcessingPayment(false);
-    }
+        onUpdateProfile(profileUpdates);
+
+        // Also update Supabase user_profiles if logged in
+        if (userProfile.email) {
+          try {
+            await dbService.upsertRow('user_profiles', {
+              email: userProfile.email,
+              ...profileUpdates,
+            }, 'email');
+          } catch (e) {
+            console.warn('Could not sync user profile to supabase:', e);
+          }
+        }
+
+        setPaymentHistory((prev) => [tx, ...prev]);
+        setPaymentSuccessTx(tx);
+        setIsProcessingPayment(false);
+      },
+      onCancel: () => {
+        setIsProcessingPayment(false);
+      },
+      onError: (errMsg) => {
+        setIsProcessingPayment(false);
+        alert(errMsg || 'Paystack payment encountered an error. Please try again.');
+      },
+    });
   };
 
   const handleRedeemVoucherModal = () => {
@@ -252,17 +271,23 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 
               {!paymentSuccessTx ? (
                 <div>
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-base sm:text-lg mb-1 pr-6">
-                    <Smartphone className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <span>Mobile Money Express Checkout</span>
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-3">
+                    <div className="flex items-center gap-2 text-emerald-800 font-bold text-base sm:text-lg">
+                      <CreditCard className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <span>Paystack Express Checkout</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ⚡ Paystack Live
+                    </span>
                   </div>
+                  
                   <p className="text-slate-600 text-xs mb-4">
-                    Pay securely using Ghana Mobile Money (MTN MoMo, Telecel Cash, or AT Money).
+                    Pay securely using <strong>Ghana Mobile Money</strong> (MTN MoMo, Telecel Cash, AT Money) or <strong>Debit/Credit Card</strong> (Visa & Mastercard).
                   </p>
 
                   <div className="bg-emerald-50 rounded-xl p-3.5 sm:p-4 mb-4 border border-emerald-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                     <div>
-                      <div className="text-[10px] sm:text-xs text-slate-500 font-medium">Selected Item / Donation:</div>
+                      <div className="text-[10px] sm:text-xs text-slate-500 font-medium">Selected Item / Plan:</div>
                       <div className="font-bold text-slate-800 text-xs sm:text-sm">{checkoutItem.title}</div>
                     </div>
                     <div className="text-left sm:text-right">
@@ -271,61 +296,61 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Provider Choice */}
-                  <div className="space-y-2.5 mb-4">
-                    <label className="block text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      1. Select MoMo Network Provider:
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
-                      {(['MTN MoMo', 'Telecel Cash', 'AT Money'] as MobileMoneyProvider[]).map((prov) => (
-                        <button
-                          key={prov}
-                          type="button"
-                          onClick={() => setSelectedProvider(prov)}
-                          className={`p-2.5 sm:p-3 rounded-xl border font-bold text-[10px] sm:text-xs text-center transition-all ${
-                            selectedProvider === prov
-                              ? 'border-emerald-600 bg-emerald-600 text-white shadow-md'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-emerald-400'
-                          }`}
-                        >
-                          {prov}
-                        </button>
-                      ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                    {/* Customer Email Input */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                        Email Address (for Paystack Receipt):
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={payerEmail}
+                        onChange={(e) => setPayerEmail(e.target.value)}
+                        placeholder="e.g. teacher@school.edu.gh"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
                     </div>
-                  </div>
 
-                  {/* Phone Number Input */}
-                  <div className="space-y-2 mb-5">
-                    <label className="block text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      2. Enter Mobile Money Phone Number:
-                    </label>
-                    <div className="relative">
+                    {/* Phone Number Input */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                        Phone Number (optional for MoMo):
+                      </label>
                       <input
                         type="text"
                         value={momoPhoneNumber}
                         onChange={(e) => setMomoPhoneNumber(e.target.value)}
                         placeholder="e.g. 0244123456"
-                        className="w-full px-3.5 py-2.5 sm:py-3 rounded-xl border border-slate-300 font-mono text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
                       />
-                      <span className="absolute right-3 top-2.5 sm:top-3 text-[10px] sm:text-xs text-slate-400 font-semibold">Ghana +233</span>
                     </div>
+                  </div>
+
+                  {/* Payment Channels Notice */}
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl mb-4 flex items-center justify-between text-[11px] text-slate-500">
+                    <span className="flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>256-Bit SSL Encrypted • PCI-DSS Certified</span>
+                    </span>
+                    <span className="font-bold text-slate-700">MTN • Telecel • AT • Cards</span>
                   </div>
 
                   {/* Submit Payment Button */}
                   <button
-                    disabled={isProcessingPayment || !momoPhoneNumber}
+                    disabled={isProcessingPayment}
                     onClick={handleExecutePayment}
-                    className="w-full py-3 sm:py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
                     {isProcessingPayment ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>Sending MoMo Prompt to Phone...</span>
+                        <span>Opening Paystack Secure Checkout...</span>
                       </>
                     ) : (
                       <>
                         <ShieldCheck className="w-5 h-5" />
-                        <span>Authorize Payment of {formatGHS(checkoutItem.amountGHS)}</span>
+                        <span>Pay {formatGHS(checkoutItem.amountGHS)} via Paystack</span>
                       </>
                     )}
                   </button>
@@ -433,21 +458,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-amber-200/60 text-xs text-slate-500 flex flex-wrap items-center gap-2">
-                  <span className="font-bold text-slate-700 text-[11px]">Click sample codes:</span>
-                  <span 
-                    onClick={() => setVoucherCodeInput('WORKSHOP-GH-2026')} 
-                    className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[11px] font-mono text-emerald-700 font-bold hover:bg-amber-100 cursor-pointer"
-                  >
-                    WORKSHOP-GH-2026
-                  </span>
-                  <span 
-                    onClick={() => setVoucherCodeInput('TEACHER-PRO-365')} 
-                    className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[11px] font-mono text-emerald-700 font-bold hover:bg-amber-100 cursor-pointer"
-                  >
-                    TEACHER-PRO-365
-                  </span>
-                </div>
+
               </div>
 
               {/* HEADTEACHER SCHOOL PLANS GRID (ONLY MONTHLY, TERM, & YEARLY SCHOOL LICENSES) */}

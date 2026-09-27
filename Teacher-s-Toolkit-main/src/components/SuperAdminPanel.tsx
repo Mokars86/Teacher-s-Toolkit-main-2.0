@@ -21,44 +21,14 @@ interface SuperAdminPanelProps {
   onOpenCertificate?: () => void;
 }
 
-const MOCK_REGISTERED_SCHOOLS: SchoolProfile[] = [
-  {
-    id: "SCH_001",
-    name: "St. Peter's Basic School",
-    code: "SCH-GH-8821",
-    region: "Greater Accra Region",
-    address: "P.O. Box 42, Osu, Accra",
-    motto: "Excellence and Integrity",
-    headteacherName: "Rev. Dr. Emmanuel Mensah",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 480,
-    totalTeachers: 18,
-  },
-  {
-    id: "SCH_002",
-    name: "Achimota Basic & Junior High",
-    code: "SCH-GH-1092",
-    region: "Greater Accra Region",
-    address: "P.O. Box AH 88, Achimota, Accra",
-    motto: "Ut Omnes Unum Sint",
-    headteacherName: "Mrs. Florence Adjei",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 620,
-    totalTeachers: 24,
-  },
-  {
-    id: "SCH_003",
-    name: "Presby Boys JHS (Legon)",
-    code: "SCH-GH-7741",
-    region: "Greater Accra Region",
-    address: "Legon, Accra",
-    motto: "In Deum Confidimus",
-    headteacherName: "Mr. Samuel Ofori-Atta",
-    academicTerm: "Term 2 - 2025/2026",
-    totalStudents: 510,
-    totalTeachers: 20,
-  },
-];
+const INITIAL_REGISTERED_SCHOOLS: SchoolProfile[] = (() => {
+  try {
+    const cached = localStorage.getItem("omr_registered_schools");
+    return cached ? JSON.parse(cached) : [];
+  } catch {
+    return [];
+  }
+})();
 
 export function SuperAdminPanel({ 
   onBack, 
@@ -521,19 +491,27 @@ export function SuperAdminPanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-mono">
-                    {MOCK_REGISTERED_SCHOOLS.map((s) => (
-                      <tr key={s.id} className="hover:bg-slate-50">
-                        <td className="p-3 font-sans font-bold text-slate-900">{s.name}</td>
-                        <td className="p-3 font-bold text-emerald-700">{s.code}</td>
-                        <td className="p-3 font-sans text-slate-700">{s.headteacherName}</td>
-                        <td className="p-3 font-sans text-slate-600">{s.totalTeachers} Staff</td>
-                        <td className="p-3 font-sans">
-                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 whitespace-nowrap">
-                            Active Term 2 License
-                          </span>
+                    {INITIAL_REGISTERED_SCHOOLS.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-slate-400 font-sans">
+                          No registered schools yet. Registered schools will appear here automatically.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      INITIAL_REGISTERED_SCHOOLS.map((s) => (
+                        <tr key={s.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-sans font-bold text-slate-900">{s.name}</td>
+                          <td className="p-3 font-bold text-emerald-700">{s.code}</td>
+                          <td className="p-3 font-sans text-slate-700">{s.headteacherName}</td>
+                          <td className="p-3 font-sans text-slate-600">{s.totalTeachers} Staff</td>
+                          <td className="p-3 font-sans">
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 whitespace-nowrap">
+                              Active License
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

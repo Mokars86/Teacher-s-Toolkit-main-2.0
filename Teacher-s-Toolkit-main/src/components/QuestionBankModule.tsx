@@ -19,7 +19,21 @@ export const QuestionBankModule: React.FC<QuestionBankModuleProps> = ({
   setUserProfile,
   onOpenExamBuilder
 }) => {
-  const [questions, setQuestions] = useState<WAECQuestion[]>(INITIAL_WAEC_QUESTION_BANK);
+  const [questions, setQuestions] = useState<WAECQuestion[]>(() => {
+    try {
+      const cached = localStorage.getItem("omr_waec_questions");
+      return cached ? JSON.parse(cached) : INITIAL_WAEC_QUESTION_BANK;
+    } catch {
+      return INITIAL_WAEC_QUESTION_BANK;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("omr_waec_questions", JSON.stringify(questions));
+    } catch {}
+  }, [questions]);
+
   const [selectedLevel, setSelectedLevel] = useState<string>("ALL");
   const [selectedSubject, setSelectedSubject] = useState<string>("ALL");
   const [selectedYear, setSelectedYear] = useState<string>("ALL");
@@ -542,60 +556,89 @@ export const QuestionBankModule: React.FC<QuestionBankModuleProps> = ({
       </div>
 
       {/* Question Cards Feed */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredQuestions.map((q) => (
-          <div
-            key={q.question_id}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-sm hover:shadow-md transition"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                  {q.exam_type} {q.year}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
-                  {q.subject}
+      {filteredQuestions.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+          <div className="w-16 h-16 mx-auto bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl flex items-center justify-center text-emerald-600">
+            <BookOpen className="w-8 h-8" />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {questions.length === 0 ? "Your WAEC Question Bank is Ready" : "No Matching Questions"}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {questions.length === 0
+                ? "Snap past BECE/WASSCE question papers with your camera or add questions manually to build your searchable test bank."
+                : "Try adjusting your search terms or subject/level filters."}
+            </p>
+          </div>
+          {questions.length === 0 && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                onClick={() => setIsIngestionModalOpen(true)}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Snap / Add Question Paper</span>
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredQuestions.map((q) => (
+            <div
+              key={q.question_id}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-sm hover:shadow-md transition"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                    {q.exam_type} {q.year}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                    {q.subject}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  Topic: {q.topic}
                 </span>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                Topic: {q.topic}
-              </span>
-            </div>
 
-            <p className="text-xs font-extrabold text-slate-900 dark:text-slate-100 leading-relaxed">
-              {q.question_text}
-            </p>
-
-            {/* Options grid */}
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {Object.entries(q.options).map(([optKey, optVal]) => {
-                const isCorrect = q.correct_option === optKey;
-                return (
-                  <div
-                    key={optKey}
-                    className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center justify-between ${
-                      isCorrect
-                        ? "bg-emerald-100/70 dark:bg-emerald-950/60 border-emerald-400 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200 font-extrabold"
-                        : "bg-slate-50 dark:bg-slate-950/40 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
-                    }`}
-                  >
-                    <span><strong className="mr-1">{optKey}.</strong> {optVal}</span>
-                    {isCorrect && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Step by step explanation */}
-            <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Step-by-Step Explanation</span>
-              <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">
-                {q.explanation}
+              <p className="text-xs font-extrabold text-slate-900 dark:text-slate-100 leading-relaxed">
+                {q.question_text}
               </p>
+
+              {/* Options grid */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {Object.entries(q.options).map(([optKey, optVal]) => {
+                  const isCorrect = q.correct_option === optKey;
+                  return (
+                    <div
+                      key={optKey}
+                      className={`px-3 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center justify-between ${
+                        isCorrect
+                          ? "bg-emerald-100/70 dark:bg-emerald-950/60 border-emerald-400 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200 font-extrabold"
+                          : "bg-slate-50 dark:bg-slate-950/40 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
+                      }`}
+                    >
+                      <span><strong className="mr-1">{optKey}.</strong> {optVal}</span>
+                      {isCorrect && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Step by step explanation */}
+              <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Step-by-Step Explanation</span>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                  {q.explanation}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* WAEC Copyright Disclaimer Banner */}
       <div className="p-4 bg-slate-200/60 dark:bg-slate-900/60 rounded-2xl border border-slate-300 dark:border-slate-800 text-[10px] text-slate-500 font-mono text-center">

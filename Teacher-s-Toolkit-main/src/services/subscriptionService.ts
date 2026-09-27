@@ -213,35 +213,7 @@ export interface LicenseVoucher {
   smsBonus?: number;
 }
 
-export const PRESET_WORKSHOP_VOUCHERS: LicenseVoucher[] = [
-  {
-    code: 'WORKSHOP-GH-2026',
-    planType: 'Workshop VIP Pass',
-    description: 'Special Teacher Workshop Pass - 30 Days Unlimited Pro Scans',
-    createdAt: '2026-08-01',
-    isUsed: false,
-    durationDays: 30,
-    smsBonus: 0,
-  },
-  {
-    code: 'TEACHER-PRO-365',
-    planType: 'Teacher Pro',
-    description: '1 Year Full Teacher Pro License Voucher',
-    createdAt: '2026-08-10',
-    isUsed: false,
-    durationDays: 365,
-    smsBonus: 0,
-  },
-  {
-    code: 'SCH-B2B-TERM2',
-    planType: 'School License',
-    description: 'Full Term 2 School B2B License Voucher',
-    createdAt: '2026-08-15',
-    isUsed: false,
-    durationDays: 120,
-    smsBonus: 0,
-  },
-];
+export const PRESET_WORKSHOP_VOUCHERS: LicenseVoucher[] = [];
 
 export function generateVoucherCode(type: 'WORKSHOP' | 'PRO' | 'SCHOOL'): string {
   const rand = Math.floor(1000 + Math.random() * 9000);

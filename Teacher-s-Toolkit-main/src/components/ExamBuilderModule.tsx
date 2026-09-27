@@ -17,61 +17,6 @@ interface ExamBuilderModuleProps {
   onTriggerPaywall?: (featureName: string, description: string) => void;
 }
 
-const DEFAULT_SAMPLE_QUESTIONS: ExamQuestion[] = [
-  {
-    id: "q_1",
-    questionNumber: 1,
-    questionText: "Which organelle is known as the powerhouse of the cell?",
-    options: {
-      A: "Nucleus",
-      B: "Mitochondria",
-      C: "Ribosome",
-      D: "Endoplasmic Reticulum"
-    },
-    correctOption: "B",
-    marks: 1
-  },
-  {
-    id: "q_2",
-    questionNumber: 2,
-    questionText: "What is the chemical formula for water?",
-    options: {
-      A: "CO2",
-      B: "H2O",
-      C: "NaCl",
-      D: "O2"
-    },
-    correctOption: "B",
-    marks: 1
-  },
-  {
-    id: "q_3",
-    questionNumber: 3,
-    questionText: "Which process do green plants use to manufacture their own food?",
-    options: {
-      A: "Respiration",
-      B: "Photosynthesis",
-      C: "Transpiration",
-      D: "Osmosis"
-    },
-    correctOption: "B",
-    marks: 1
-  },
-  {
-    id: "q_4",
-    questionNumber: 4,
-    questionText: "What is the SI unit of electric current?",
-    options: {
-      A: "Volt",
-      B: "Watt",
-      C: "Ampere",
-      D: "Ohm"
-    },
-    correctOption: "C",
-    marks: 1
-  }
-];
-
 interface SavedExamDraft {
   id: string;
   examTitle: string;
@@ -92,16 +37,16 @@ export function ExamBuilderModule({
   setSelectedClass,
   onSaveMasterKeyAndScan
 }: ExamBuilderModuleProps) {
-  const [examTitle, setExamTitle] = useState<string>("End of Term 3 Examination");
-  const [subject, setSubject] = useState<string>("Integrated Science");
-  const [timeAllowed, setTimeAllowed] = useState<string>("1 Hour 30 Mins");
-  const [totalTargetQuestions, setTotalTargetQuestions] = useState<number>(40);
+  const [examTitle, setExamTitle] = useState<string>("");
+  const [subject, setSubject] = useState<string>("");
+  const [timeAllowed, setTimeAllowed] = useState<string>("1 Hour");
+  const [totalTargetQuestions, setTotalTargetQuestions] = useState<number>(20);
   const [instructions, setInstructions] = useState<string>(
     "Answer all objective questions on the provided OMR Answer Sheet using an HB pencil. Do not fold or crease the answer sheet."
   );
 
   const [examType, setExamType] = useState<"mcq" | "theory">("mcq");
-  const [questions, setQuestions] = useState<ExamQuestion[]>(DEFAULT_SAMPLE_QUESTIONS);
+  const [questions, setQuestions] = useState<ExamQuestion[]>([]);
 
   const [isOutputModalOpen, setIsOutputModalOpen] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
@@ -187,7 +132,18 @@ export function ExamBuilderModule({
     });
   };
 
-  const classList = ["JHS 2 Gold", "JHS 1 Emerald", "Primary 6 Ruby", "SHS 1 General Arts"];
+  const classList = useMemo(() => {
+    let fromRosters: string[] = [];
+    try {
+      const cached = localStorage.getItem("omr_custom_rosters");
+      if (cached) {
+        fromRosters = Object.keys(JSON.parse(cached));
+      }
+    } catch {}
+    const defaultClasses = ["Primary 1", "Primary 2", "Primary 3", "Primary 4", "Primary 5", "Primary 6", "JHS 1", "JHS 2", "JHS 3", "SHS 1", "SHS 2", "SHS 3"];
+    const combined = Array.from(new Set([...fromRosters, selectedClass, ...defaultClasses].filter(Boolean)));
+    return combined;
+  }, [selectedClass]);
   const subjectList = ["Integrated Science", "Mathematics", "English Language", "Social Studies", "RME", "ICT / Computing"];
 
   const handleAddQuestion = () => {
@@ -488,11 +444,24 @@ export function ExamBuilderModule({
             </button>
           </div>
 
-          {questions.map((q) => (
-            <div 
-              key={q.id}
-              className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-3xl p-5 sm:p-6 shadow-md dark:shadow-xl space-y-4 relative transition-all"
-            >
+          {questions.length === 0 ? (
+            <div className="bg-white dark:bg-slate-800/90 border border-dashed border-slate-300 dark:border-slate-700/80 rounded-3xl p-10 text-center space-y-3">
+              <div className="w-12 h-12 mx-auto bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">No Questions Added Yet</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Click "+ Create Manual Question" or "Import from WAEC Bank" below to add questions to this exam paper.
+                </p>
+              </div>
+            </div>
+          ) : (
+            questions.map((q) => (
+              <div 
+                key={q.id}
+                className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-3xl p-5 sm:p-6 shadow-md dark:shadow-xl space-y-4 relative transition-all"
+              >
               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700/60 pb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-extrabold text-sm shadow-md">
@@ -607,7 +576,8 @@ export function ExamBuilderModule({
                 </div>
               </div>
             </div>
-          ))}
+          ))
+          )}
 
           <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button

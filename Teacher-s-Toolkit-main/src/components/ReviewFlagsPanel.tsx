@@ -15,12 +15,15 @@ export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
   onCancel,
   studentName
 }) => {
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [currentIndex, setCurrentIndex] = useState<number>(() => {
+    const firstFlaggedIndex = questions.findIndex(q => q.flagged);
+    return firstFlaggedIndex >= 0 ? firstFlaggedIndex : 0;
+  });
   const [localQuestions, setLocalQuestions] = useState<QuestionConfidence[]>(() => 
     questions.map(q => ({ ...q }))
   );
 
-  const currentQuestion = localQuestions[currentIndex];
+  const currentQuestion = localQuestions[currentIndex] || localQuestions[0];
 
   const handleOverride = (option: string) => {
     const updated = [...localQuestions];

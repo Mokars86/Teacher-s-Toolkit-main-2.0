@@ -207,8 +207,14 @@ export const QuestionBankImportModal: React.FC<QuestionBankImportModalProps> = (
           {filteredQuestions.length === 0 ? (
             <div className="text-center py-12 space-y-2">
               <AlertCircle className="w-8 h-8 mx-auto text-slate-300" />
-              <p className="text-sm font-bold text-slate-600 dark:text-slate-300">No matching questions found.</p>
-              <p className="text-xs text-slate-400">Try adjusting your subject, level, or year filters.</p>
+              <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                {allQuestions.length === 0 ? "No questions in Question Bank yet" : "No matching questions found"}
+              </p>
+              <p className="text-xs text-slate-400">
+                {allQuestions.length === 0
+                  ? "Add or snap past exam questions in the WAEC Question Bank module to import them here."
+                  : "Try adjusting your subject, level, or year filters."}
+              </p>
             </div>
           ) : (
             filteredQuestions.map((q) => {

@@ -29,179 +29,62 @@ interface StudentTrendData {
   attendanceRate: number; // e.g. 96
 }
 
-// Preset Ghanaian student profiles with seed history for realistic trend tracking
-const SEED_STUDENT_TRENDS: StudentTrendData[] = [
-  {
-    id: "STUD_023",
-    name: "John Doe",
-    className: "JHS 2 Gold",
-    growthIndicator: "Improving",
-    growthRate: 15,
-    attendanceRate: 98,
-    history: [
-      { name: "Week 1: Intro Quiz", score: 70, maxScore: 100, classAvg: 68 },
-      { name: "Week 3: CA Test 1", score: 72, maxScore: 100, classAvg: 70 },
-      { name: "Week 5: Midterm Exam", score: 78, maxScore: 100, classAvg: 71 },
-      { name: "Week 8: CA Test 2", score: 82, maxScore: 100, classAvg: 73 },
-      { name: "Week 12: Term Final", score: 85, maxScore: 100, classAvg: 74 },
-    ],
-    strengths: ["Algebraic fractions", "Excellent attention to steps", "Strong participation"],
-    weaknesses: ["Word problem translation", "Needs more practice in fast calculation"],
-  },
-  {
-    id: "STUD_088",
-    name: "Alice Johnson",
-    className: "JHS 2 Gold",
-    growthIndicator: "Consistent",
-    growthRate: 2,
-    attendanceRate: 96,
-    history: [
-      { name: "Week 1: Intro Quiz", score: 92, maxScore: 100, classAvg: 68 },
-      { name: "Week 3: CA Test 1", score: 90, maxScore: 100, classAvg: 70 },
-      { name: "Week 5: Midterm Exam", score: 94, maxScore: 100, classAvg: 71 },
-      { name: "Week 8: CA Test 2", score: 91, maxScore: 100, classAvg: 73 },
-      { name: "Week 12: Term Final", score: 94, maxScore: 100, classAvg: 74 },
-    ],
-    strengths: ["Geometric proofs", "Analytical thinking", "Accuracy in bubble sheets"],
-    weaknesses: ["Occasional rush under pressure"],
-  },
-  {
-    id: "STUD_003",
-    name: "Michael Ampofo",
-    className: "Primary 5 Emerald",
-    growthIndicator: "Improving",
-    growthRate: 22,
-    attendanceRate: 92,
-    history: [
-      { name: "Week 1: Intro Quiz", score: 50, maxScore: 100, classAvg: 62 },
-      { name: "Week 3: CA Test 1", score: 58, maxScore: 100, classAvg: 65 },
-      { name: "Week 5: Midterm Exam", score: 64, maxScore: 100, classAvg: 66 },
-      { name: "Week 8: CA Test 2", score: 68, maxScore: 100, classAvg: 69 },
-      { name: "Week 12: Term Final", score: 72, maxScore: 100, classAvg: 70 },
-    ],
-    strengths: ["High effort and homework submission", "Responsive to feedback", "Improved speed"],
-    weaknesses: ["Basic addition rules", "Requires multi-step layout tracking"],
-  },
-  {
-    id: "STUD_014",
-    name: "Grace Mensah",
-    className: "SHS 1 General Arts",
-    growthIndicator: "Declining",
-    growthRate: -12,
-    attendanceRate: 88,
-    history: [
-      { name: "Week 1: Intro Quiz", score: 80, maxScore: 100, classAvg: 71 },
-      { name: "Week 3: CA Test 1", score: 78, maxScore: 100, classAvg: 72 },
-      { name: "Week 5: Midterm Exam", score: 74, maxScore: 100, classAvg: 70 },
-      { name: "Week 8: CA Test 2", score: 70, maxScore: 100, classAvg: 71 },
-      { name: "Week 12: Term Final", score: 68, maxScore: 100, classAvg: 73 },
-    ],
-    strengths: ["Creative writing & essay responses", "Initial topic grasp is fast"],
-    weaknesses: ["Struggling with exam pacing", "Requires regular class exercises review"],
-  },
-  {
-    id: "STUD_005",
-    name: "David Osei",
-    className: "JHS 2 Gold",
-    growthIndicator: "Needs Attention",
-    growthRate: -5,
-    attendanceRate: 84,
-    history: [
-      { name: "Week 1: Intro Quiz", score: 55, maxScore: 100, classAvg: 68 },
-      { name: "Week 3: CA Test 1", score: 52, maxScore: 100, classAvg: 70 },
-      { name: "Week 5: Midterm Exam", score: 48, maxScore: 100, classAvg: 71 },
-      { name: "Week 8: CA Test 2", score: 51, maxScore: 100, classAvg: 73 },
-      { name: "Week 12: Term Final", score: 50, maxScore: 100, classAvg: 74 },
-    ],
-    strengths: ["Visual learner", "Strong practical skills"],
-    weaknesses: ["Often leaves bubbles blank", "Lacks confidence during exam sessions"],
-  }
-];
-
 export function StudentTrendTracker({ onBack, resultsList }: StudentTrendTrackerProps) {
-  const [selectedStudentId, setSelectedStudentId] = useState<string>("STUD_023");
-
-  // Dynamically link scans/results from the OMR resultsList!
+  // Dynamically compile trends purely from actual OMR resultsList!
   const compiledStudentTrends = useMemo(() => {
-    // Start with pre-filled baseline trend data
-    const list = [...SEED_STUDENT_TRENDS];
+    const map = new Map<string, StudentTrendData>();
 
-    // If there are real graded results, let's incorporate them!
     resultsList.forEach(res => {
-      // Find matching student name or ID
-      const nameMatch = res.candidateName.toLowerCase();
-      let targetIndex = list.findIndex(s => 
-        nameMatch.includes(s.name.toLowerCase()) || 
-        s.id === res.candidateId
-      );
+      const studentId = res.candidateId || res.candidateName || 'STUD_1';
+      const studentName = res.candidateName || `Candidate #${res.candidateId}`;
+      const className = res.className || 'Class';
 
-      // If they are not in the default list, we can dynamically add them to have a trackable student profile!
-      if (targetIndex === -1 && res.candidateName) {
-        // Create new dynamic trend profile
-        const newStudentTrend: StudentTrendData = {
-          id: res.candidateId || `STUD_DYN_${Math.random().toString(36).substr(2, 5)}`,
-          name: res.candidateName,
-          className: res.className || "Primary/JHS Class",
+      if (!map.has(studentId)) {
+        map.set(studentId, {
+          id: studentId,
+          name: studentName,
+          className,
           growthIndicator: "Consistent",
           growthRate: 0,
-          attendanceRate: 95,
+          attendanceRate: 100,
           history: [
-            { name: "Week 1 Baseline", score: Math.max(40, res.percentage - 15), maxScore: 100, classAvg: 68 },
-            { name: "Week 5 Mid-Term", score: Math.max(45, res.percentage - 5), maxScore: 100, classAvg: 71 },
-            { name: "Latest OMR Scan: " + (res.testName || "Quiz"), score: res.percentage, maxScore: 100, classAvg: 73 }
-          ],
-          strengths: ["Active class involvement", "Excellent bubble layout execution"],
-          weaknesses: ["Revise key concept sheets before assessment sessions"]
-        };
-        
-        // Compute trend
-        const scores = newStudentTrend.history.map(h => h.score);
-        const diff = scores[scores.length - 1] - scores[0];
-        newStudentTrend.growthRate = diff;
-        if (diff > 8) newStudentTrend.growthIndicator = "Improving";
-        else if (diff < -8) newStudentTrend.growthIndicator = "Declining";
-        else if (scores[scores.length - 1] < 55) newStudentTrend.growthIndicator = "Needs Attention";
-        else newStudentTrend.growthIndicator = "Consistent";
-
-        list.push(newStudentTrend);
-      } else if (targetIndex !== -1) {
-        // Update their existing trend with this active OMR scan!
-        const existing = list[targetIndex];
-        const isAlreadyAdded = existing.history.some(h => h.name.includes(res.testName));
-        if (!isAlreadyAdded) {
-          // Add this real score to their progression
-          const updatedHistory = [
-            ...existing.history,
             {
-              name: `OMR: ${res.testName}`,
-              score: res.percentage,
+              name: res.testName || "Assessment 1",
+              score: res.percentage || 0,
               maxScore: 100,
-              classAvg: Math.round(70 + Math.random() * 8)
+              classAvg: 70
             }
-          ];
-          
-          // Re-evaluate growth metrics
-          const startScore = updatedHistory[0].score;
-          const endScore = updatedHistory[updatedHistory.length - 1].score;
-          const rate = endScore - startScore;
-          
-          let indicator: "Consistent" | "Improving" | "Declining" | "Needs Attention" = "Consistent";
-          if (rate > 8) indicator = "Improving";
-          else if (rate < -8) indicator = "Declining";
-          else if (endScore < 55) indicator = "Needs Attention";
+          ],
+          strengths: ["Participates in class assessments"],
+          weaknesses: ["Review weak questions from test results"]
+        });
+      } else {
+        const student = map.get(studentId)!;
+        student.history.push({
+          name: res.testName || `Assessment ${student.history.length + 1}`,
+          score: res.percentage || 0,
+          maxScore: 100,
+          classAvg: 70
+        });
 
-          list[targetIndex] = {
-            ...existing,
-            history: updatedHistory,
-            growthRate: rate,
-            growthIndicator: indicator
-          };
-        }
+        // Recompute growth metrics
+        const first = student.history[0].score;
+        const last = student.history[student.history.length - 1].score;
+        const diff = last - first;
+        student.growthRate = diff;
+        if (diff > 8) student.growthIndicator = "Improving";
+        else if (diff < -8) student.growthIndicator = "Declining";
+        else if (last < 50) student.growthIndicator = "Needs Attention";
+        else student.growthIndicator = "Consistent";
       }
     });
 
-    return list;
+    return Array.from(map.values());
   }, [resultsList]);
+
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
+    return compiledStudentTrends[0]?.id || "";
+  });
 
   // Find selected student details
   const activeStudent = useMemo(() => {
@@ -289,11 +172,35 @@ export function StudentTrendTracker({ onBack, resultsList }: StudentTrendTracker
 
       <div className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
 
-        {/* Dashboard Grid Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* Left Column: Student Roster Select */}
-          <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
+        {compiledStudentTrends.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+            <div className="w-16 h-16 mx-auto bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl flex items-center justify-center text-emerald-600">
+              <TrendingUp className="w-8 h-8" />
+            </div>
+            <div className="max-w-md mx-auto space-y-1">
+              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                No Student Performance Scans Yet
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Scan OMR answer sheets or record assessment marks on the dashboard to automatically trace student academic growth, strength areas, and historical trends.
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={onBack}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition inline-flex items-center gap-2 cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Return to Dashboard</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Dashboard Grid Layout */
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left Column: Student Roster Select */}
+            <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
             <div>
               <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5" />
@@ -697,6 +604,7 @@ export function StudentTrendTracker({ onBack, resultsList }: StudentTrendTracker
           </div>
 
         </div>
+        )}
 
       </div>
 
