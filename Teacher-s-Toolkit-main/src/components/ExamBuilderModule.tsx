@@ -4,7 +4,7 @@ import {
   Printer, Share2, Save, FileText, CheckCircle2, CheckCircle, 
   HelpCircle, ChevronDown, Sparkles, Copy, X, ArrowRight, Eye, RefreshCw, BookOpen
 } from 'lucide-react';
-import { ExamPaper, ExamQuestion, AnswerKey, SchoolProfile } from '../types';
+import { ExamPaper, ExamQuestion, AnswerKey, SchoolProfile, CBTExam } from '../types';
 import { QuestionBankImportModal } from './QuestionBankImportModal';
 
 interface ExamBuilderModuleProps {
@@ -13,6 +13,7 @@ interface ExamBuilderModuleProps {
   selectedClass: string;
   setSelectedClass: (cls: string) => void;
   onSaveMasterKeyAndScan: (key: AnswerKey) => void;
+  onLaunchCBTExam?: (cbtExam: CBTExam) => void;
   userProfile?: any;
   onTriggerPaywall?: (featureName: string, description: string) => void;
 }
@@ -35,7 +36,8 @@ export function ExamBuilderModule({
   schoolProfile,
   selectedClass,
   setSelectedClass,
-  onSaveMasterKeyAndScan
+  onSaveMasterKeyAndScan,
+  onLaunchCBTExam
 }: ExamBuilderModuleProps) {
   const [examTitle, setExamTitle] = useState<string>("");
   const [subject, setSubject] = useState<string>("");
@@ -258,6 +260,45 @@ export function ExamBuilderModule({
 
   const handleLaunchOMRScanner = () => {
     onSaveMasterKeyAndScan(compiledAnswerKey);
+  };
+
+  const handleLaunchCBT = () => {
+    if (!questions || questions.length === 0) {
+      alert("Please add at least 1 question to publish a Digital CBT Exam.");
+      return;
+    }
+
+    const pin = Math.floor(100000 + Math.random() * 900000).toString();
+    const durationMatch = timeAllowed.match(/\d+/);
+    const durationMins = durationMatch ? parseInt(durationMatch[0]) : 15;
+
+    const newCbtExam: CBTExam = {
+      id: `cbt_${Date.now()}`,
+      pin,
+      title: examTitle || "Objective CBT Test",
+      subject: subject || "General Subject",
+      className: selectedClass,
+      instructions: instructions || "Answer all questions. Instant scoring enabled.",
+      durationMinutes: durationMins,
+      questions,
+      isActive: true,
+      showInstantScore: true,
+      passPercentage: 50,
+      createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    };
+
+    try {
+      const raw = localStorage.getItem('omr_cbt_exams');
+      const existing: CBTExam[] = raw ? JSON.parse(raw) : [];
+      const updated = [newCbtExam, ...existing.filter(e => e.id !== newCbtExam.id)];
+      localStorage.setItem('omr_cbt_exams', JSON.stringify(updated));
+    } catch {}
+
+    if (onLaunchCBTExam) {
+      onLaunchCBTExam(newCbtExam);
+    } else {
+      alert(`Digital CBT Exam Published!\nTest PIN: ${pin}\nStudents can now take this exam online without bubble sheets.`);
+    }
   };
 
   return (
@@ -838,11 +879,20 @@ export function ExamBuilderModule({
               </div>
 
               <button
+                type="button"
+                onClick={handleLaunchCBT}
+                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:from-indigo-500 hover:to-purple-500 text-white font-black rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+              >
+                <span>🌐</span>
+                <span>Launch as Digital CBT Online Exam (No Bubble Sheets / 100% Accurate)</span>
+              </button>
+
+              <button
                 onClick={handleLaunchOMRScanner}
-                className="w-full btn-emerald py-3.5 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg"
+                className="w-full btn-emerald py-3.5 rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg"
               >
                 <Camera className="w-5 h-5" />
-                <span>📸 Ready for Objective Marker (Launch Camera Scanner)</span>
+                <span>📸 Print OMR & Launch Camera Scanner</span>
               </button>
             </div>
           </div>

@@ -7,6 +7,19 @@ export interface CornerAnchor {
 }
 
 export type ScanPreset = 'cv_real' | 'sim_realistic' | 'sim_struggling' | 'sim_audit' | 'sim_perfect';
+export type ScanSensitivity = 'normal' | 'faint_pencil' | 'pen_marker';
+
+/**
+ * Normalizes answer key retrieval supporting both numeric key answers[1] and string key answers["1"].
+ */
+export function getEffectiveKeyAnswer(key?: AnswerKey | null, questionNumber: number = 1): string {
+  if (!key || !key.answers) return 'A';
+  const val = key.answers[questionNumber] ?? (key.answers as any)[String(questionNumber)];
+  if (val && typeof val === 'string' && val.trim()) {
+    return val.trim().toUpperCase();
+  }
+  return 'A';
+}
 
 /**
  * Bilinear interpolation helper to map a normalized point (u, v) in [0, 1] x [0, 1]
@@ -32,26 +45,197 @@ export function interpolateQuad(
 }
 
 /**
- * Loads an image from a Data URL, Object URL, or image source safely in all browsers & Android WebView.
+ * Loads an image safely from Data URL, Object URL, or remote source with safety timeout.
  */
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    let isSettled = false;
+
+    const timer = setTimeout(() => {
+      if (!isSettled) {
+        isSettled = true;
+        reject(new Error('Image load timed out'));
+      }
+    }, 12000);
+
     if (src.startsWith('http://') || src.startsWith('https://')) {
       img.crossOrigin = 'anonymous';
     }
-    img.onload = () => resolve(img);
-    img.onerror = (err) => {
-      console.warn('Image load error on source, falling back gracefully:', err);
-      reject(new Error('Failed to load OMR sheet image for processing'));
+
+    img.onload = () => {
+      if (!isSettled) {
+        isSettled = true;
+        clearTimeout(timer);
+        resolve(img);
+      }
     };
+
+    img.onerror = (err) => {
+      if (!isSettled) {
+        isSettled = true;
+        clearTimeout(timer);
+        console.warn('Image load error on source:', err);
+        reject(new Error('Failed to load OMR sheet image for processing'));
+      }
+    };
+
     img.src = src;
   });
 }
 
 /**
- * Accurately measures the pencil/pen optical mark intensity in a circular bubble region.
- * Uses center-core density sampling and local baseline subtraction.
+ * Accurately measures the local paper background brightness around a candidate bubble
+ * by sampling an annulus ring (12 points) and picking the upper percentile (bright clean paper).
+ */
+function getRobustLocalPaperBrightness(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  centerX: number,
+  centerY: number,
+  radius: number
+): number {
+  const samples: number[] = [];
+  const ringDist = radius * 2.1;
+  const angles = [0, 0.523, 1.047, 1.57, 2.094, 2.618, 3.141, 3.665, 4.188, 4.712, 5.235, 5.759];
+
+  for (let i = 0; i < angles.length; i++) {
+    const ax = Math.round(centerX + Math.cos(angles[i]) * ringDist);
+    const ay = Math.round(centerY + Math.sin(angles[i]) * ringDist);
+
+    if (ax >= 0 && ax < width && ay >= 0 && ay < height) {
+      const idx = (ay * width + ax) * 4;
+      const lum = (data[idx] * 77 + data[idx + 1] * 150 + data[idx + 2] * 29) >> 8;
+      samples.push(lum);
+    }
+  }
+
+  if (samples.length === 0) return 220;
+  
+  // Sort samples ascending and take the 80th percentile (clean paper white level)
+  samples.sort((a, b) => a - b);
+  const pIndex = Math.min(samples.length - 1, Math.floor(samples.length * 0.80));
+  return Math.max(100, samples[pIndex]);
+}
+
+/**
+ * ULTRA-ACCURATE BUBBLE OPTICAL DENSITY SAMPLER
+ * Accurately measures graphite pencil (HB to 4B), ballpoint pen (blue/black), gel pen, marker shading, ticks, and crosses.
+ * Evaluates core darkness, fill density, and delta against local paper white level.
+ */
+export function sampleBubbleDarknessFromBuffer(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  sensitivity: ScanSensitivity = 'normal'
+): number {
+  let maxNetScore = 0;
+
+  const localBgLum = getRobustLocalPaperBrightness(data, width, height, centerX, centerY, radius);
+
+  // Micro-jitter search offsets to tolerate slight tilt or lens distortion
+  const searchRad = Math.max(2, Math.min(7, Math.round(radius * 0.35)));
+  const searchOffsets: { dx: number; dy: number }[] = [
+    { dx: 0, dy: 0 },
+    { dx: -searchRad, dy: 0 },
+    { dx: searchRad, dy: 0 },
+    { dx: 0, dy: -searchRad },
+    { dx: 0, dy: searchRad },
+    { dx: -Math.round(searchRad * 0.7), dy: -Math.round(searchRad * 0.7) },
+    { dx: Math.round(searchRad * 0.7), dy: -Math.round(searchRad * 0.7) },
+    { dx: -Math.round(searchRad * 0.7), dy: Math.round(searchRad * 0.7) },
+    { dx: Math.round(searchRad * 0.7), dy: Math.round(searchRad * 0.7) }
+  ];
+
+  const radCeil = Math.max(3, Math.ceil(radius));
+  const coreRadSq = (radius * 0.55) * (radius * 0.55);
+  const innerRadSq = (radius * 0.92) * (radius * 0.92);
+
+  // Darkness threshold delta for shading detection
+  const lightDelta = sensitivity === 'faint_pencil' ? 5 : (sensitivity === 'pen_marker' ? 12 : 8);
+  const mediumDelta = sensitivity === 'faint_pencil' ? 10 : (sensitivity === 'pen_marker' ? 20 : 14);
+
+  for (let k = 0; k < searchOffsets.length; k++) {
+    const cx = Math.round(centerX + searchOffsets[k].dx);
+    const cy = Math.round(centerY + searchOffsets[k].dy);
+
+    const minX = Math.max(0, cx - radCeil);
+    const maxX = Math.min(width - 1, cx + radCeil);
+    const minY = Math.max(0, cy - radCeil);
+    const maxY = Math.min(height - 1, cy + radCeil);
+
+    let lumSum = 0;
+    let pixelCount = 0;
+    let coreLumSum = 0;
+    let coreCount = 0;
+    let lightDarkCount = 0;
+    let mediumDarkCount = 0;
+
+    for (let py = minY; py <= maxY; py++) {
+      const rowOffset = py * width;
+      const offY = py - cy;
+      const offYSq = offY * offY;
+
+      for (let px = minX; px <= maxX; px++) {
+        const offX = px - cx;
+        const distSq = offX * offX + offYSq;
+
+        if (distSq <= innerRadSq) {
+          const idx = (rowOffset + px) * 4;
+          // Photometric luminance: (77*R + 150*G + 29*B) >> 8
+          const lum = (data[idx] * 77 + data[idx + 1] * 150 + data[idx + 2] * 29) >> 8;
+
+          lumSum += lum;
+          pixelCount++;
+
+          if (lum < (localBgLum - lightDelta)) {
+            lightDarkCount++;
+          }
+          if (lum < (localBgLum - mediumDelta)) {
+            mediumDarkCount++;
+          }
+
+          if (distSq <= coreRadSq) {
+            coreLumSum += lum;
+            coreCount++;
+          }
+        }
+      }
+    }
+
+    if (pixelCount > 0) {
+      const avgLum = lumSum / pixelCount;
+      const coreLum = coreCount > 0 ? (coreLumSum / coreCount) : avgLum;
+      
+      const netAvgDarkness = Math.max(0, localBgLum - avgLum);
+      const netCoreDarkness = Math.max(0, localBgLum - coreLum);
+      const lightRatio = lightDarkCount / pixelCount;
+      const mediumRatio = mediumDarkCount / pixelCount;
+
+      // Real shading fills the core and area. Empty printed letters only cover ~5% of circle.
+      let fillMultiplier = 1.0;
+      if (lightRatio < 0.05 && mediumRatio < 0.03 && netCoreDarkness < 8) {
+        fillMultiplier = 0.20; // Empty printed bubble perimeter
+      } else if (lightRatio < 0.10 && mediumRatio < 0.06 && netCoreDarkness < 12) {
+        fillMultiplier = 0.60;
+      }
+
+      const score = ((netCoreDarkness * 0.40) + (netAvgDarkness * 0.30) + (lightRatio * 25) + (mediumRatio * 30)) * fillMultiplier;
+      if (score > maxNetScore) {
+        maxNetScore = score;
+      }
+    }
+  }
+
+  return maxNetScore;
+}
+
+/**
+ * Legacy wrapper for single-bubble canvas sampling.
  */
 export function sampleBubbleFill(
   ctx: CanvasRenderingContext2D,
@@ -60,241 +244,160 @@ export function sampleBubbleFill(
   radius: number,
   width: number,
   height: number
-): { rawDarkness: number; coreDarkness: number; fillRatio: number; localBg: number; netScore: number } {
-  // Search a small 3x3 kernel around the target center to lock onto the darkest pencil core
-  let maxCoreDarkness = 0;
-  let maxFillRatio = 0;
-  let maxRawDarkness = 0;
-
-  const kernelOffsets = [
-    { dx: 0, dy: 0 },
-    { dx: -3, dy: 0 },
-    { dx: 3, dy: 0 },
-    { dx: 0, dy: -3 },
-    { dx: 0, dy: 3 },
-    { dx: -2, dy: -2 },
-    { dx: 2, dy: 2 }
-  ];
-
-  for (const { dx, dy } of kernelOffsets) {
-    const cx = centerX + dx;
-    const cy = centerY + dy;
-
-    const minX = Math.max(0, Math.floor(cx - radius * 1.1));
-    const maxX = Math.min(width - 1, Math.ceil(cx + radius * 1.1));
-    const minY = Math.max(0, Math.floor(cy - radius * 1.1));
-    const maxY = Math.min(height - 1, Math.ceil(cy + radius * 1.1));
-
-    const boxW = maxX - minX + 1;
-    const boxH = maxY - minY + 1;
-
-    if (boxW <= 0 || boxH <= 0) continue;
-
-    let imgData: ImageData;
-    try {
-      imgData = ctx.getImageData(minX, minY, boxW, boxH);
-    } catch {
-      continue;
-    }
-
-    const data = imgData.data;
-    let coreLumSum = 0;
-    let coreCount = 0;
-    let totalLumSum = 0;
-    let darkPixelCount = 0;
-    let totalPixelCount = 0;
-
-    const coreRadiusSq = (radius * 0.6) * (radius * 0.6);
-    const totalRadiusSq = radius * radius;
-
-    for (let py = minY; py <= maxY; py++) {
-      for (let px = minX; px <= maxX; px++) {
-        const offX = px - cx;
-        const offY = py - cy;
-        const distSq = offX * offX + offY * offY;
-
-        if (distSq <= totalRadiusSq) {
-          const idx = ((py - minY) * boxW + (px - minX)) * 4;
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
-          totalLumSum += lum;
-          totalPixelCount++;
-
-          if (lum < 150) {
-            darkPixelCount++;
-          }
-
-          if (distSq <= coreRadiusSq) {
-            coreLumSum += lum;
-            coreCount++;
-          }
-        }
-      }
-    }
-
-    if (totalPixelCount > 0) {
-      const avgLum = totalLumSum / totalPixelCount;
-      const darkness = Math.max(0, 255 - avgLum);
-      const fill = darkPixelCount / totalPixelCount;
-      const coreLum = coreCount > 0 ? (coreLumSum / coreCount) : avgLum;
-      const coreDark = Math.max(0, 255 - coreLum);
-
-      if (coreDark > maxCoreDarkness) {
-        maxCoreDarkness = coreDark;
-        maxRawDarkness = darkness;
-        maxFillRatio = fill;
-      }
-    }
+) {
+  try {
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const score = sampleBubbleDarknessFromBuffer(imgData.data, width, height, centerX, centerY, radius);
+    return {
+      rawDarkness: score,
+      coreDarkness: score,
+      fillRatio: score / 255,
+      localBg: 0,
+      netScore: Math.round(score)
+    };
+  } catch {
+    return { rawDarkness: 0, coreDarkness: 0, fillRatio: 0, localBg: 0, netScore: 0 };
   }
-
-  // Sample surrounding local paper baseline
-  let bgSum = 0;
-  let bgCount = 0;
-  const bgOffsets = [-radius * 1.4, radius * 1.4];
-  for (const off of bgOffsets) {
-    const sy = Math.max(0, Math.min(height - 1, Math.round(centerY + off)));
-    const sx = Math.max(0, Math.min(width - 1, Math.round(centerX)));
-    try {
-      const p = ctx.getImageData(Math.max(0, sx - 2), Math.max(0, sy - 2), 5, 5).data;
-      for (let i = 0; i < p.length; i += 4) {
-        bgSum += 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2];
-        bgCount++;
-      }
-    } catch {}
-  }
-
-  const localBgLum = bgCount > 0 ? (bgSum / bgCount) : 220;
-  const localBg = Math.max(0, 255 - localBgLum);
-
-  // Net score: subtract local paper background from core darkness
-  const netDarkness = Math.max(0, maxCoreDarkness - localBg);
-  const netScore = Math.min(100, Math.round((netDarkness / 255) * 65 + maxFillRatio * 35));
-
-  return {
-    rawDarkness: maxRawDarkness,
-    coreDarkness: maxCoreDarkness,
-    fillRatio: maxFillRatio,
-    localBg,
-    netScore
-  };
 }
 
 /**
- * Scans an OMR canvas frame and identifies the chosen option for every question.
- * Compares option intensities differentially for robust mark detection.
+ * Evaluates candidate answers for a given column layout configuration and vertical range.
+ * Uses Intra-Row Relative Contrast to accurately pick student marks regardless of ambient lighting.
  */
-export function scanOMRFrameFromCanvas(
-  ctx: CanvasRenderingContext2D,
+export function evaluateLayoutWithMargins(
+  data: Uint8ClampedArray,
   width: number,
   height: number,
   questionsCount: number,
-  corners?: { tl: { x: number; y: number }; tr: { x: number; y: number }; bl: { x: number; y: number }; br: { x: number; y: number } },
-  targetKey?: AnswerKey | null
-): QuestionConfidence[] {
-  const tl = corners?.tl || { x: width * 0.08, y: height * 0.08 };
-  const tr = corners?.tr || { x: width * 0.92, y: height * 0.08 };
-  const bl = corners?.bl || { x: width * 0.08, y: height * 0.92 };
-  const br = corners?.br || { x: width * 0.92, y: height * 0.92 };
+  numCols: number,
+  corners: { tl: { x: number; y: number }; tr: { x: number; y: number }; bl: { x: number; y: number }; br: { x: number; y: number } },
+  optionsCount: number = 4,
+  sensitivity: ScanSensitivity = 'normal',
+  topMarginV: number = 0.10,
+  bottomMarginV: number = 0.92,
+  bubbleOffsetStartFactor: number = 0.30,
+  bubbleOffsetEndFactor: number = 0.94
+): { results: QuestionConfidence[]; totalConfidenceScore: number; detectedCount: number } {
+  const numOpts = Math.max(2, Math.min(5, optionsCount));
+  const allOptions: Array<'A' | 'B' | 'C' | 'D' | 'E'> = ['A', 'B', 'C', 'D', 'E'];
+  const optList = allOptions.slice(0, numOpts);
 
-  const confResults: QuestionConfidence[] = [];
-
-  const numCols = questionsCount > 30 ? 4 : (questionsCount > 20 ? 3 : (questionsCount >= 10 ? 2 : 1));
   const rowsPerCol = Math.ceil(questionsCount / numCols);
+  const bubbleRadius = Math.max(5, Math.min(24, (width * (numOpts === 3 ? 0.022 : (numOpts === 5 ? 0.015 : 0.018)))));
 
-  const keyAnswers = targetKey?.answers || {};
+  const results: QuestionConfidence[] = [];
+  let totalConfidenceScore = 0;
+  let detectedCount = 0;
 
   for (let q = 1; q <= questionsCount; q++) {
     const colIndex = Math.floor((q - 1) / rowsPerCol);
     const rowIndex = (q - 1) % rowsPerCol;
 
-    // Master Key for this question
-    const correctKey = (keyAnswers[q] ?? (keyAnswers as any)[String(q)] ?? '').toString().trim().toUpperCase();
-
-    // Column horizontal boundaries
     let colLeftU: number;
     let colRightU: number;
+
     if (numCols === 1) {
-      colLeftU = 0.12;
-      colRightU = 0.88;
+      colLeftU = 0.04;
+      colRightU = 0.96;
     } else if (numCols === 2) {
-      colLeftU = colIndex === 0 ? 0.05 : 0.53;
-      colRightU = colIndex === 0 ? 0.47 : 0.95;
+      colLeftU = colIndex === 0 ? 0.03 : 0.51;
+      colRightU = colIndex === 0 ? 0.49 : 0.97;
     } else if (numCols === 3) {
-      colLeftU = 0.04 + colIndex * 0.32;
-      colRightU = colLeftU + 0.28;
+      colLeftU = 0.02 + colIndex * 0.325;
+      colRightU = colLeftU + 0.30;
     } else {
-      colLeftU = 0.03 + colIndex * 0.24;
-      colRightU = colLeftU + 0.21;
+      colLeftU = 0.02 + colIndex * 0.245;
+      colRightU = colLeftU + 0.225;
     }
 
-    const topMarginV = 0.14;
-    const bottomMarginV = 0.90;
     const rowV = rowsPerCol > 1 
       ? topMarginV + (rowIndex / (rowsPerCol - 1)) * (bottomMarginV - topMarginV)
       : (topMarginV + bottomMarginV) / 2;
 
     const colWidth = colRightU - colLeftU;
-    const bubblesStartU = colLeftU + colWidth * 0.26;
-    const bubblesEndU = colLeftU + colWidth * 0.94;
+    
+    // Bubble coordinates: safely offset past question numbers (e.g. "1.", "10.")
+    const bubblesStartU = colLeftU + colWidth * bubbleOffsetStartFactor;
+    const bubblesEndU = colLeftU + colWidth * bubbleOffsetEndFactor;
 
-    const optList: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
-    const optScores: { [key in 'A' | 'B' | 'C' | 'D']: number } = { A: 0, B: 0, C: 0, D: 0 };
+    const optScores: { [key: string]: number } = {};
 
-    const bubbleRadius = Math.max(7, Math.min(22, (width * 0.016)));
+    for (let idx = 0; idx < optList.length; idx++) {
+      const opt = optList[idx];
+      const optU = optList.length > 1 
+        ? bubblesStartU + (idx / (optList.length - 1)) * (bubblesEndU - bubblesStartU) 
+        : bubblesStartU;
+      const pt = interpolateQuad(optU, rowV, corners.tl, corners.tr, corners.br, corners.bl);
 
-    optList.forEach((opt, idx) => {
-      const optU = bubblesStartU + (idx / 3) * (bubblesEndU - bubblesStartU);
-      const pt = interpolateQuad(optU, rowV, tl, tr, br, bl);
+      const darkness = sampleBubbleDarknessFromBuffer(data, width, height, pt.x, pt.y, bubbleRadius, sensitivity);
+      optScores[opt] = darkness;
+    }
 
-      const { netScore } = sampleBubbleFill(ctx, pt.x, pt.y, bubbleRadius, width, height);
-      optScores[opt] = netScore;
-    });
-
-    // Differential Analysis across the 4 options:
-    const sorted = [...optList].sort((a, b) => optScores[b] - optScores[a]);
+    // Sort active options by darkness descending
+    const sorted = [...optList].sort((a, b) => (optScores[b] || 0) - (optScores[a] || 0));
     const firstOpt = sorted[0];
-    const secondOpt = sorted[1];
-    const thirdOpt = sorted[2];
-    const fourthOpt = sorted[3];
+    const secondOpt = sorted[1] || sorted[0];
+    const others = sorted.slice(1);
+    const otherMean = others.length > 0 
+      ? (others.reduce((acc, o) => acc + (optScores[o] || 0), 0) / others.length) 
+      : 0;
 
-    const firstScore = optScores[firstOpt];
-    const secondScore = optScores[secondOpt];
-    const meanOther = (optScores[secondOpt] + optScores[thirdOpt] + optScores[fourthOpt]) / 3;
+    const firstScore = optScores[firstOpt] || 0;
+    const secondScore = optScores[secondOpt] || 0;
+    const contrast = firstScore - otherMean;
     const lead = firstScore - secondScore;
-    const contrast = firstScore - meanOther;
 
     let detected = '';
     let confidence = 95;
     let flagged = false;
 
-    // A marked bubble will have distinct contrast over the average of the other 3 empty bubbles
-    if (firstScore < 16 || contrast < 8) {
-      // Unanswered / Blank question
-      detected = '';
-      confidence = 90;
+    // Detection Thresholds with Intra-Row Contrast:
+    // 1. Clear Shaded Mark (Pencil / Pen / Marker)
+    if (firstScore >= 4.2 && contrast >= 1.2 && lead >= 0.8) {
+      detected = firstOpt;
+      confidence = Math.min(99, Math.max(82, Math.round(80 + contrast * 1.8)));
       flagged = false;
-    } else if (secondScore >= 25 && lead < 8) {
-      // Multiple marked bubbles / ambiguous smudge
+      totalConfidenceScore += contrast;
+      detectedCount++;
+    } 
+    // 2. Faint pencil mark with clear single selection
+    else if (firstScore >= 3.2 && (firstScore >= secondScore * 1.30 || (contrast >= 1.0 && lead >= 0.6))) {
+      detected = firstOpt;
+      confidence = Math.min(94, Math.max(76, Math.round(75 + contrast * 1.5)));
+      flagged = false;
+      totalConfidenceScore += contrast;
+      detectedCount++;
+    } 
+    // 3. Dense mark (e.g. Marker / Dark Ballpoint)
+    else if (firstScore >= 8.0 && lead >= 0.6) {
+      detected = firstOpt;
+      confidence = 96;
+      flagged = false;
+      totalConfidenceScore += contrast;
+      detectedCount++;
+    } 
+    // 4. Ambiguous multiple marks on same question row (e.g. erasure smudge or double shade)
+    else if (firstScore >= 5.5 && secondScore >= 4.5 && lead < 1.2) {
       detected = firstOpt;
       confidence = 50;
       flagged = true;
-    } else {
-      // Clear valid choice
-      detected = firstOpt;
-      confidence = Math.min(99, Math.max(82, Math.round(78 + lead * 0.5)));
+      detectedCount++;
+    } 
+    // 5. Blank / Unshaded row
+    else {
+      detected = '';
+      confidence = 90;
       flagged = false;
     }
 
-    confResults.push({
+    results.push({
       questionNumber: q,
       options: {
-        A: optScores.A,
-        B: optScores.B,
-        C: optScores.C,
-        D: optScores.D
+        A: Math.round(optScores.A || 0),
+        B: Math.round(optScores.B || 0),
+        C: Math.round(optScores.C || 0),
+        D: Math.round(optScores.D || 0),
+        ...(numOpts >= 5 ? { E: Math.round(optScores.E || 0) } : {})
       },
       detected,
       confidence,
@@ -302,50 +405,206 @@ export function scanOMRFrameFromCanvas(
     });
   }
 
-  return confResults;
+  return { results, totalConfidenceScore, detectedCount };
 }
 
 /**
- * Processes a captured OMR student answer sheet image using Computer Vision.
+ * HIGH-SPEED ADAPTIVE SCANNER CORE
+ * Automatically tries multiple candidate column layouts and vertical margin offsets
+ * to lock onto the true answer sheet grid regardless of paper header or photo distance.
+ */
+export function scanOMRFrameFromBuffer(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  questionsCount: number,
+  corners?: { tl: { x: number; y: number }; tr: { x: number; y: number }; bl: { x: number; y: number }; br: { x: number; y: number } },
+  targetKey?: AnswerKey | null,
+  forceCols?: number,
+  sensitivity: ScanSensitivity = 'normal'
+): QuestionConfidence[] {
+  const tl = corners?.tl || { x: width * 0.04, y: height * 0.04 };
+  const tr = corners?.tr || { x: width * 0.96, y: height * 0.04 };
+  const bl = corners?.bl || { x: width * 0.04, y: height * 0.96 };
+  const br = corners?.br || { x: width * 0.96, y: height * 0.96 };
+  const cornerObj = { tl, tr, bl, br };
+  const optCount = targetKey?.optionsCount || 4;
+
+  const candidateTopMargins = [0.05, 0.10, 0.16, 0.22];
+  const candidateBottomMargins = [0.95, 0.89];
+  const candidateOffsets = [
+    { start: optCount === 3 ? 0.32 : (optCount === 5 ? 0.26 : 0.30), end: optCount === 5 ? 0.96 : 0.94 },
+    { start: 0.22, end: 0.96 }
+  ];
+
+  const colCandidates = forceCols 
+    ? [forceCols] 
+    : (questionsCount <= 12 ? [1, 2] : (questionsCount <= 30 ? [2, 1, 3] : [2, 3, 4]));
+
+  let bestResult: QuestionConfidence[] = [];
+  let bestScore = -1;
+
+  for (const cols of colCandidates) {
+    for (const topV of candidateTopMargins) {
+      for (const botV of candidateBottomMargins) {
+        if (botV <= topV + 0.3) continue;
+
+        for (const offset of candidateOffsets) {
+          const evalRes = evaluateLayoutWithMargins(
+            data, 
+            width, 
+            height, 
+            questionsCount, 
+            cols, 
+            cornerObj, 
+            optCount, 
+            sensitivity,
+            topV,
+            botV,
+            offset.start,
+            offset.end
+          );
+
+          // Score this candidate configuration
+          const score = (evalRes.detectedCount * 100) + evalRes.totalConfidenceScore;
+          if (score > bestScore) {
+            bestScore = score;
+            bestResult = evalRes.results;
+          }
+        }
+      }
+    }
+  }
+
+  return bestResult.length > 0 ? bestResult : evaluateLayoutWithMargins(data, width, height, questionsCount, 2, cornerObj, optCount, sensitivity).results;
+}
+
+/**
+ * Scans an OMR canvas frame by extracting a single ImageData buffer.
+ */
+export function scanOMRFrameFromCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  questionsCount: number,
+  corners?: { tl: { x: number; y: number }; tr: { x: number; y: number }; bl: { x: number; y: number }; br: { x: number; y: number } },
+  targetKey?: AnswerKey | null,
+  forceCols?: number,
+  sensitivity: ScanSensitivity = 'normal'
+): QuestionConfidence[] {
+  try {
+    const imgData = ctx.getImageData(0, 0, width, height);
+    return scanOMRFrameFromBuffer(imgData.data, width, height, questionsCount, corners, targetKey, forceCols, sensitivity);
+  } catch (e) {
+    console.warn('Canvas scan readback error:', e);
+    return [];
+  }
+}
+
+/**
+ * Processes a captured/uploaded OMR student answer sheet image with Computer Vision.
+ * Automatically aligns sheet margins, searches multi-scale candidate bounding boxes,
+ * and extracts all marked bubble answers with high fidelity.
  */
 export async function processOMRSheetImage(
   imageSource: string,
-  cornerAnchors: CornerAnchor[],
-  questionsCount: number,
-  targetKey?: AnswerKey
+  cornerAnchors?: CornerAnchor[],
+  questionsCount?: number,
+  targetKey?: AnswerKey,
+  forceCols?: number,
+  sensitivity: ScanSensitivity = 'normal'
 ): Promise<QuestionConfidence[]> {
+  const finalQCount = targetKey?.questionsCount || questionsCount || 20;
+  const optCount = targetKey?.optionsCount || 4;
+
   try {
     const img = await loadImage(imageSource);
 
     const canvas = document.createElement('canvas');
-    canvas.width = 1200;
-    canvas.height = 1600;
+    // High-resolution processing buffer (1000 x 1400) for crisp bubble reading
+    canvas.width = 1000;
+    canvas.height = 1400;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) {
       throw new Error('Canvas 2D context unavailable');
     }
 
+    // Draw image onto processing canvas
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
+    // Check if explicit teacher-dragged corner anchors were provided
+    let hasCustomAnchors = false;
     const anchorMap = new Map<string, { x: number; y: number }>();
-    cornerAnchors.forEach(a => {
-      anchorMap.set(a.id, {
-        x: (a.x / 100) * canvas.width,
-        y: (a.y / 100) * canvas.height
-      });
-    });
 
-    const corners = {
-      tl: anchorMap.get('TL') || { x: canvas.width * 0.08, y: canvas.height * 0.08 },
-      tr: anchorMap.get('TR') || { x: canvas.width * 0.92, y: canvas.height * 0.08 },
-      bl: anchorMap.get('BL') || { x: canvas.width * 0.08, y: canvas.height * 0.92 },
-      br: anchorMap.get('BR') || { x: canvas.width * 0.92, y: canvas.height * 0.92 }
-    };
+    if (cornerAnchors && cornerAnchors.length === 4) {
+      // Check if corners are customized beyond standard defaults
+      hasCustomAnchors = cornerAnchors.some(a => 
+        (a.id === 'TL' && (Math.abs(a.x - 12) > 3 || Math.abs(a.y - 12) > 3)) ||
+        (a.id === 'TR' && (Math.abs(a.x - 88) > 3 || Math.abs(a.y - 12) > 3)) ||
+        (a.id === 'BL' && (Math.abs(a.x - 12) > 3 || Math.abs(a.y - 88) > 3)) ||
+        (a.id === 'BR' && (Math.abs(a.x - 88) > 3 || Math.abs(a.y - 88) > 3))
+      );
 
-    return scanOMRFrameFromCanvas(ctx, canvas.width, canvas.height, questionsCount, corners, targetKey);
+      if (hasCustomAnchors) {
+        cornerAnchors.forEach(a => {
+          anchorMap.set(a.id, {
+            x: (a.x / 100) * canvas.width,
+            y: (a.y / 100) * canvas.height
+          });
+        });
+      }
+    }
+
+    if (hasCustomAnchors) {
+      const corners = {
+        tl: anchorMap.get('TL') || { x: canvas.width * 0.04, y: canvas.height * 0.04 },
+        tr: anchorMap.get('TR') || { x: canvas.width * 0.96, y: canvas.height * 0.04 },
+        bl: anchorMap.get('BL') || { x: canvas.width * 0.04, y: canvas.height * 0.96 },
+        br: anchorMap.get('BR') || { x: canvas.width * 0.96, y: canvas.height * 0.96 }
+      };
+      return scanOMRFrameFromCanvas(ctx, canvas.width, canvas.height, finalQCount, corners, targetKey, forceCols, sensitivity);
+    }
+
+    // Auto-adaptive multi-margin boundary search for snapped / uploaded photos
+    const candidateMargins = [0.02, 0.05, 0.09, 0.14, 0.18];
+    let bestResults: QuestionConfidence[] = [];
+    let bestScore = -1;
+
+    for (const m of candidateMargins) {
+      const corners = {
+        tl: { x: canvas.width * m, y: canvas.height * m },
+        tr: { x: canvas.width * (1 - m), y: canvas.height * m },
+        bl: { x: canvas.width * m, y: canvas.height * (1 - m) },
+        br: { x: canvas.width * (1 - m), y: canvas.height * (1 - m) }
+      };
+
+      const results = scanOMRFrameFromCanvas(ctx, canvas.width, canvas.height, finalQCount, corners, targetKey, forceCols, sensitivity);
+      const detectedCount = results.filter(r => r.detected !== '').length;
+      const confidenceSum = results.reduce((acc, curr) => acc + (curr.detected ? curr.confidence : 0), 0);
+      const score = (detectedCount * 100) + confidenceSum;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestResults = results;
+      }
+    }
+
+    return bestResults.length > 0 ? bestResults : Array.from({ length: finalQCount }, (_, i) => ({
+      questionNumber: i + 1,
+      options: { A: 0, B: 0, C: 0, D: 0, ...(optCount >= 5 ? { E: 0 } : {}) },
+      detected: '',
+      confidence: 50,
+      flagged: false
+    }));
   } catch (error) {
-    console.warn('OMR image scan error, applying fallback dataset:', error);
-    return simulateStudentSheet('sim_realistic', targetKey, questionsCount);
+    console.warn('OMR image scan error, returning fallback confidence list:', error);
+    return Array.from({ length: finalQCount }, (_, i) => ({
+      questionNumber: i + 1,
+      options: { A: 0, B: 0, C: 0, D: 0, ...(optCount >= 5 ? { E: 0 } : {}) },
+      detected: '',
+      confidence: 50,
+      flagged: false
+    }));
   }
 }
 
@@ -358,33 +617,36 @@ export function simulateStudentSheet(
   questionCountFallback?: number
 ): QuestionConfidence[] {
   const count = targetKey?.questionsCount || questionCountFallback || 20;
+  const optCount = targetKey?.optionsCount || 4;
   const confLog: QuestionConfidence[] = [];
 
-  const optionsArr: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
-  const keyAnswers = targetKey?.answers || {};
+  const allOptions: Array<'A' | 'B' | 'C' | 'D' | 'E'> = ['A', 'B', 'C', 'D', 'E'];
+  const optionsArr = allOptions.slice(0, optCount);
 
   for (let q = 1; q <= count; q++) {
-    const correctOpt = (keyAnswers[q] ?? (keyAnswers as any)[String(q)] ?? optionsArr[(q - 1) % 4]).toString().trim().toUpperCase();
+    const correctOpt = getEffectiveKeyAnswer(targetKey, q);
 
     if (preset === 'sim_perfect') {
-      const opts = { A: 4, B: 3, C: 4, D: 3 };
-      opts[correctOpt as 'A' | 'B' | 'C' | 'D'] = 98;
+      const opts: { [key: string]: number } = { A: 4, B: 3, C: 4, D: 3 };
+      if (optCount >= 5) opts.E = 3;
+      opts[correctOpt] = 98;
       confLog.push({
         questionNumber: q,
-        options: opts,
+        options: opts as any,
         detected: correctOpt,
         confidence: 98,
         flagged: false
       });
     } else if (preset === 'sim_audit' && (q === 5 || q === 17)) {
       const otherOpt = correctOpt === 'A' ? 'B' : 'A';
-      const opts = { A: 6, B: 5, C: 6, D: 5 };
-      opts[correctOpt as 'A' | 'B' | 'C' | 'D'] = 52;
-      opts[otherOpt as 'A' | 'B' | 'C' | 'D'] = 48;
+      const opts: { [key: string]: number } = { A: 6, B: 5, C: 6, D: 5 };
+      if (optCount >= 5) opts.E = 5;
+      opts[correctOpt] = 52;
+      opts[otherOpt] = 48;
 
       confLog.push({
         questionNumber: q,
-        options: opts,
+        options: opts as any,
         detected: correctOpt,
         confidence: 48,
         flagged: true
@@ -394,15 +656,16 @@ export function simulateStudentSheet(
       let chosenOpt = correctOpt;
       if (!isCorrect) {
         const wrongChoices = optionsArr.filter(o => o !== correctOpt);
-        chosenOpt = wrongChoices[(q * 3) % wrongChoices.length];
+        chosenOpt = wrongChoices[(q * 3) % wrongChoices.length] || optionsArr[0];
       }
 
-      const opts = { A: 5, B: 6, C: 4, D: 5 };
-      opts[chosenOpt as 'A' | 'B' | 'C' | 'D'] = 92;
+      const opts: { [key: string]: number } = { A: 5, B: 6, C: 4, D: 5 };
+      if (optCount >= 5) opts.E = 5;
+      opts[chosenOpt] = 92;
 
       confLog.push({
         questionNumber: q,
-        options: opts,
+        options: opts as any,
         detected: chosenOpt,
         confidence: 92,
         flagged: false
@@ -417,17 +680,18 @@ export function simulateStudentSheet(
         chosenOpt = '';
       } else if (isMistake) {
         const wrongChoices = optionsArr.filter(o => o !== correctOpt);
-        chosenOpt = wrongChoices[q % wrongChoices.length];
+        chosenOpt = wrongChoices[q % wrongChoices.length] || optionsArr[0];
       }
 
-      const opts = { A: 4, B: 5, C: 3, D: 4 };
+      const opts: { [key: string]: number } = { A: 4, B: 5, C: 3, D: 4 };
+      if (optCount >= 5) opts.E = 4;
       if (chosenOpt) {
-        opts[chosenOpt as 'A' | 'B' | 'C' | 'D'] = 96;
+        opts[chosenOpt] = 96;
       }
 
       confLog.push({
         questionNumber: q,
-        options: opts,
+        options: opts as any,
         detected: chosenOpt,
         confidence: isBlank ? 90 : 96,
         flagged: false

@@ -11,7 +11,7 @@ export interface UserProfile {
   referralCode: string;
   referralCount: number;
   submittedQuestionsCount: number;
-  activeSubscriptionPlan: "Free" | "Teacher Pro" | "School License" | "School License Weekly" | "School License Monthly" | "School License Term" | "School License Year";
+  activeSubscriptionPlan: "Free" | "Teacher Pro" | "Teacher Pro Monthly" | "Teacher Pro Term" | "Teacher Pro Year" | "School License" | "School License Weekly" | "School License Monthly" | "School License Term" | "School License Year" | string;
   scansThisMonth: number;
   maxFreeScansPerMonth: number;
   smsCredits: number;
@@ -50,6 +50,7 @@ export interface ClassSettings {
   testName: string;
   className: string;
   totalQuestions: number;
+  optionsCount?: number; // 3 (A-C for Lower Level), 4 (A-D Standard), 5 (A-E)
   gradingScale: {
     A: number; // e.g. 90
     B: number; // e.g. 80
@@ -63,7 +64,8 @@ export interface AnswerKey {
   title: string;
   className: string;
   questionsCount: number;
-  answers: { [key: number]: string }; // Map of question index (1-based) to correct option (A, B, C, D)
+  optionsCount?: number; // 3 for A-C (Lower Level), 4 for A-D (Standard), 5 for A-E
+  answers: { [key: number]: string }; // Map of question index (1-based) to correct option (A, B, C, D, E)
   createdAt: string;
 }
 
@@ -74,8 +76,9 @@ export interface QuestionConfidence {
     B: number;
     C: number;
     D: number;
+    E?: number;
   };
-  detected: string; // "A", "B", "C", "D", or "" (Blank), or "Multiple"
+  detected: string; // "A", "B", "C", "D", "E", or "" (Blank), or "Multiple"
   confidence: number; // 0-100
   flagged: boolean; // low confidence or multiple/blank marked
 }
@@ -123,7 +126,43 @@ export enum ScreenId {
   RESOURCE_TRACKER = "RESOURCE_TRACKER",
   EXAM_BUILDER = "EXAM_BUILDER",
   QUESTION_BANK = "QUESTION_BANK",
-  WORKSHOP_CERTIFICATE = "WORKSHOP_CERTIFICATE"
+  WORKSHOP_CERTIFICATE = "WORKSHOP_CERTIFICATE",
+  CBT_HUB = "CBT_HUB",
+  CBT_STUDENT_PORTAL = "CBT_STUDENT_PORTAL"
+}
+
+// --- CBT / DIGITAL ONLINE EXAM TYPES ---
+export interface CBTExam {
+  id: string;
+  pin: string; // 6-digit numeric PIN for frictionless student login
+  title: string;
+  subject: string;
+  className: string;
+  instructions: string;
+  durationMinutes: number;
+  questions: ExamQuestion[];
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
+  showInstantScore?: boolean;
+  passPercentage?: number;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export interface CBTSubmission {
+  id: string;
+  examId: string;
+  pin: string;
+  studentName: string;
+  studentId: string;
+  className: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  answers: { [key: number]: string };
+  timeSpentSeconds: number;
+  submittedAt: string;
+  isSyncedToGrades?: boolean;
 }
 
 // --- EXAM QUESTION BUILDER TYPES ---

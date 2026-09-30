@@ -40,6 +40,76 @@ export function SuperAdminPanel({
   const [activeTab, setActiveTab] = useState<"vouchers" | "analytics" | "schools" | "system">("vouchers");
   const [localVouchers, setLocalVouchers] = useState<LicenseVoucher[]>(vouchersList);
 
+  // --- 4-DIGIT SECURITY PIN STATE ---
+  const [storedPin, setStoredPin] = useState<string>(() => {
+    try {
+      return localStorage.getItem('omr_super_admin_pin') || '2026';
+    } catch {
+      return '2026';
+    }
+  });
+
+  const [isPinAuthenticated, setIsPinAuthenticated] = useState<boolean>(false);
+  const [enteredPin, setEnteredPin] = useState<string>('');
+  const [pinError, setPinError] = useState<string>('');
+
+  // Change PIN state
+  const [currentPinVerify, setCurrentPinVerify] = useState<string>('');
+  const [newPinSetting, setNewPinSetting] = useState<string>('');
+  const [confirmPinSetting, setConfirmPinSetting] = useState<string>('');
+  const [changePinMessage, setChangePinMessage] = useState<string>('');
+
+  const handleKeypadPress = (digit: string) => {
+    if (enteredPin.length >= 4) return;
+    const next = enteredPin + digit;
+    setEnteredPin(next);
+    setPinError('');
+
+    if (next.length === 4) {
+      if (next === storedPin) {
+        setIsPinAuthenticated(true);
+        setPinError('');
+      } else {
+        setPinError('Incorrect 4-Digit Security PIN');
+        setTimeout(() => setEnteredPin(''), 600);
+      }
+    }
+  };
+
+  const handleKeypadBackspace = () => {
+    setEnteredPin(prev => prev.slice(0, -1));
+    setPinError('');
+  };
+
+  const handleKeypadClear = () => {
+    setEnteredPin('');
+    setPinError('');
+  };
+
+  const handleChangePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentPinVerify !== storedPin) {
+      setChangePinMessage('Error: Current PIN is incorrect.');
+      return;
+    }
+    if (newPinSetting.length !== 4 || !/^\d{4}$/.test(newPinSetting)) {
+      setChangePinMessage('Error: New PIN must be exactly 4 digits.');
+      return;
+    }
+    if (newPinSetting !== confirmPinSetting) {
+      setChangePinMessage('Error: New PIN and Confirmation do not match.');
+      return;
+    }
+
+    setStoredPin(newPinSetting);
+    localStorage.setItem('omr_super_admin_pin', newPinSetting);
+    setCurrentPinVerify('');
+    setNewPinSetting('');
+    setConfirmPinSetting('');
+    setChangePinMessage('Security PIN successfully updated!');
+    setTimeout(() => setChangePinMessage(''), 3500);
+  };
+
   // Voucher generator form
   const [newVoucherType, setNewVoucherType] = useState<'WORKSHOP' | 'PRO' | 'SCHOOL'>('WORKSHOP');
   const [newVoucherDesc, setNewVoucherDesc] = useState('Teacher Training Workshop VIP Pass');
@@ -71,6 +141,117 @@ export function SuperAdminPanel({
     v.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
     v.planType.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // ─────────────────────────────────────────────────────────────
+  // RENDER: 4-DIGIT PIN SECURITY LOCK GATE
+  // ─────────────────────────────────────────────────────────────
+  if (!isPinAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 font-sans select-none animate-fadeIn">
+        <div className="max-w-sm w-full bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl text-center space-y-6 relative">
+          
+          <button
+            type="button"
+            onClick={onBack}
+            className="absolute top-5 left-5 p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+            title="Cancel & Return"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+
+          {/* Glowing Shield / Lock */}
+          <div className="pt-2 space-y-2">
+            <div className="inline-flex p-4 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.2)]">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-black text-white tracking-tight">
+              Super Admin Security PIN
+            </h2>
+            <p className="text-xs text-slate-400">
+              Enter 4-Digit PIN to access developer & platform controls.
+            </p>
+          </div>
+
+          {/* 4 Circular PIN Bubbles */}
+          <div className="flex justify-center items-center gap-3.5 py-2">
+            {[0, 1, 2, 3].map((idx) => {
+              const isFilled = enteredPin.length > idx;
+              return (
+                <div
+                  key={idx}
+                  className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center font-mono text-xl font-black transition-all ${
+                    isFilled
+                      ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-md shadow-indigo-500/20 scale-105'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-600'
+                  }`}
+                >
+                  {isFilled ? '●' : ''}
+                </div>
+              );
+            })}
+          </div>
+
+          {pinError && (
+            <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center justify-center gap-1.5 animate-shake">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{pinError}</span>
+            </div>
+          )}
+
+          {/* 12-Key Numeric Keypad */}
+          <div className="grid grid-cols-3 gap-2.5 pt-1">
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(digit => (
+              <button
+                key={digit}
+                type="button"
+                onClick={() => handleKeypadPress(digit)}
+                className="h-12 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:bg-indigo-600 active:text-white border border-slate-700/80 text-white font-mono text-lg font-bold shadow-sm transition active:scale-95 cursor-pointer"
+              >
+                {digit}
+              </button>
+            ))}
+            
+            <button
+              type="button"
+              onClick={handleKeypadClear}
+              className="h-12 rounded-2xl bg-slate-800/40 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 text-xs font-bold transition active:scale-95 cursor-pointer"
+            >
+              Clear
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleKeypadPress('0')}
+              className="h-12 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:bg-indigo-600 active:text-white border border-slate-700/80 text-white font-mono text-lg font-bold shadow-sm transition active:scale-95 cursor-pointer"
+            >
+              0
+            </button>
+
+            <button
+              type="button"
+              onClick={handleKeypadBackspace}
+              className="h-12 rounded-2xl bg-slate-800/40 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 text-xs font-bold transition active:scale-95 cursor-pointer flex items-center justify-center"
+              title="Backspace"
+            >
+              ⌫
+            </button>
+          </div>
+
+          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
+            <span>Default PIN: <strong className="text-slate-400">2026</strong></span>
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-slate-400 hover:text-white underline cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-slate-100 text-slate-900 font-sans">
@@ -541,6 +722,77 @@ export function SuperAdminPanel({
                 <span className="text-slate-500">Mobile Money Rails:</span>
                 <span className="font-bold text-emerald-700">MTN MoMo, Telecel Cash, AT Money Operational</span>
               </div>
+            </div>
+
+            {/* 4-Digit Security PIN Update Card */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm font-sans">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Change 4-Digit Security PIN</h3>
+                  <p className="text-xs text-slate-500">Update the PIN required to access Super Admin and developer features.</p>
+                </div>
+              </div>
+
+              {changePinMessage && (
+                <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                  changePinMessage.startsWith('Error') 
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                }`}>
+                  {changePinMessage.startsWith('Error') ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                  <span>{changePinMessage}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleChangePinSubmit} className="space-y-3 max-w-md">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-600">Current 4-Digit PIN</label>
+                  <input
+                    type="password"
+                    maxLength={4}
+                    value={currentPinVerify}
+                    onChange={(e) => setCurrentPinVerify(e.target.value.replace(/\D/g, ''))}
+                    placeholder="••••"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono tracking-widest focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600">New 4-Digit PIN</label>
+                    <input
+                      type="password"
+                      maxLength={4}
+                      value={newPinSetting}
+                      onChange={(e) => setNewPinSetting(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono tracking-widest focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600">Confirm New PIN</label>
+                    <input
+                      type="password"
+                      maxLength={4}
+                      value={confirmPinSetting}
+                      onChange={(e) => setConfirmPinSetting(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono tracking-widest focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-sm transition cursor-pointer"
+                >
+                  Update Security PIN
+                </button>
+              </form>
             </div>
           </div>
         )}

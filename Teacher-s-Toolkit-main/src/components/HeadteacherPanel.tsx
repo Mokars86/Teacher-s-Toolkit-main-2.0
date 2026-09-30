@@ -10,7 +10,7 @@ import {
   SchoolProfile, ClassSubmission, SubmissionStatus, TeacherJoinRequest, PresetRemark, GradedResult, UserProfile 
 } from '../types';
 import { LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, generateVoucherCode,
-  getReferralLink, REDEEM_POINT_COSTS, REFERRAL_REWARDS, redeemPointsForPlan
+  getReferralLink, REDEEM_POINT_COSTS, REFERRAL_REWARDS, redeemPointsForPlan, hasSchoolLicense
 } from '../services/subscriptionService';
 import { QuestionBankModule } from './QuestionBankModule';
 // @ts-ignore
@@ -592,8 +592,38 @@ export function HeadteacherPanel({
           </div>
         </div>
 
-        {/* Print Broadsheet & Logout in Sidebar Footer */}
-        <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
+        {/* Print Broadsheet, Subscription Status & Logout in Sidebar Footer */}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+          {/* Institutional Subscription Status Card */}
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                School License
+              </span>
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${
+                hasSchoolLicense(userProfile || null)
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+              }`}>
+                {userProfile?.activeSubscriptionPlan || 'Free'}
+              </span>
+            </div>
+            {onOpenSubscriptionModal && (
+              <button
+                type="button"
+                onClick={onOpenSubscriptionModal}
+                className={`w-full py-1.5 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs ${
+                  hasSchoolLicense(userProfile || null)
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    : 'bg-gradient-to-r from-amber-500 to-emerald-600 text-white hover:opacity-95'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{hasSchoolLicense(userProfile || null) ? 'Manage License' : 'Upgrade to School Plan'}</span>
+              </button>
+            )}
+          </div>
+
           <button
             id="btn_print_broadsheet"
             onClick={() => window.print()}

@@ -203,11 +203,13 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             <div className="flex items-center gap-3 sm:gap-4 text-emerald-100">
               {isHeadteacher ? (
                 <div>
-                  School Status: <span className="font-bold text-emerald-300">Multi-Teacher Broadsheet Sync Active</span>
+                  School Status: <span className={`font-bold ${hasSchoolLicense(userProfile) ? 'text-emerald-300' : 'text-amber-300'}`}>
+                    {hasSchoolLicense(userProfile) ? 'Active School License' : 'Free Tier'}
+                  </span>
                 </div>
               ) : (
                 <div>
-                  Scans Left: <span className="font-bold text-white">{hasProAccess(userProfile) ? 'Unlimited ∞' : `${Math.max(0, (userProfile.maxFreeScansPerMonth || 50) - (userProfile.scansThisMonth || 0))}/50`}</span>
+                  Access: <span className="font-bold text-white">{hasProAccess(userProfile) ? 'Teacher Pro Active' : 'Free Tier'}</span>
                 </div>
               )}
               <div>
@@ -461,9 +463,9 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 
               </div>
 
-              {/* HEADTEACHER SCHOOL PLANS GRID (ONLY MONTHLY, TERM, & YEARLY SCHOOL LICENSES) */}
+              {/* HEADTEACHER SCHOOL PLANS GRID (WEEKLY, MONTHLY, TERM, & YEARLY SCHOOL LICENSES) */}
               {isHeadteacher ? (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {HEADTEACHER_SCHOOL_PLANS.map((plan) => {
                     const isCurrent = userProfile.activeSubscriptionPlan === plan.id || 
                       (userProfile.activeSubscriptionPlan === 'School License' && plan.popular);
@@ -541,40 +543,40 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                   })}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {/* 1. FREE TIER & PRO PLANS */}
-                  {SUBSCRIPTION_PLANS.slice(0, 1).map((plan) => {
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                  {/* 1. FREE TIER */}
+                  {SUBSCRIPTION_PLANS.filter((plan) => plan.id === 'Free').map((plan) => {
                     const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
                     return (
                       <div
                         key={plan.id}
                         className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative overflow-hidden"
                       >
-                        <div className="p-5 sm:p-6 space-y-4">
+                        <div className="p-4 sm:p-5 space-y-3">
                           <div>
-                            <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
-                            <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
+                            <h3 className="font-bold text-base text-slate-900">{plan.name}</h3>
+                            <p className="text-[11px] text-slate-500 mt-1 min-h-[28px]">{plan.tagline}</p>
                           </div>
 
                           <div className="py-2 border-y border-slate-100">
-                            <div className="text-2xl font-black text-slate-800">{plan.priceTag}</div>
+                            <div className="text-xl font-black text-slate-800">{plan.priceTag}</div>
                           </div>
 
-                          <ul className="space-y-2.5 text-xs text-slate-600">
+                          <ul className="space-y-2 text-[11px] text-slate-600">
                             {plan.features.map((feat, idx) => (
-                              <li key={idx} className="flex items-start gap-2">
-                                <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                              <li key={idx} className="flex items-start gap-1.5">
+                                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                                 <span>{feat}</span>
                               </li>
                             ))}
                           </ul>
                         </div>
 
-                        <div className="p-5 bg-slate-50 border-t border-slate-100">
+                        <div className="p-4 bg-slate-50 border-t border-slate-100">
                           {isCurrent ? (
-                            <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
+                            <div className="w-full py-2 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
                               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                              <span>Current Active Plan</span>
+                              <span>Current Active</span>
                             </div>
                           ) : (
                             <button
@@ -587,10 +589,9 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                                   planId: plan.id,
                                 })
                               }
-                              className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                              className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                             >
-                              <span>Subscribe via MoMo</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
+                              <span>Free Plan</span>
                             </button>
                           )}
                         </div>
@@ -598,44 +599,44 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                     );
                   })}
 
-                  {/* 2. SEASONAL PASS CARD (INTEGRATED FOR EASY ACCESS) */}
+                  {/* 2. SEASONAL PASS CARD */}
                   <div className="bg-white rounded-2xl border-2 border-amber-400 shadow-md hover:shadow-lg transition-all flex flex-col justify-between relative overflow-hidden">
-                    <div className="bg-amber-400 text-slate-950 text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans flex items-center justify-center gap-1">
-                      <Zap className="w-3.5 h-3.5 fill-slate-950" />
-                      <span>Seasonal Exam Pass</span>
+                    <div className="bg-amber-400 text-slate-950 text-[10px] font-extrabold uppercase tracking-widest text-center py-0.5 font-sans flex items-center justify-center gap-1">
+                      <Zap className="w-3 h-3 fill-slate-950" />
+                      <span>Exam Pass</span>
                     </div>
 
-                    <div className="p-4 sm:p-6 space-y-4">
+                    <div className="p-4 sm:p-5 space-y-3">
                       <div>
-                        <h3 className="font-bold text-lg text-slate-900">End-of-Term 2-Wk Pass</h3>
-                        <p className="text-xs text-slate-500 mt-1 min-h-[32px]">14 days of unlimited OMR sheet scanning & PDF report card exports during busy exam crunch weeks.</p>
+                        <h3 className="font-bold text-base text-slate-900">End-of-Term Pass</h3>
+                        <p className="text-[11px] text-slate-500 mt-1 min-h-[28px]">14 days of unlimited OMR sheet scanning & CBT exam grading.</p>
                       </div>
 
                       <div className="py-2 border-y border-slate-100">
-                        <div className="text-2xl font-black text-amber-600">GH₵ 15 <span className="text-xs font-semibold text-slate-400">/ 14 days</span></div>
+                        <div className="text-xl font-black text-amber-600">GH₵ 15 <span className="text-[10px] font-semibold text-slate-400">/ 14 days</span></div>
                       </div>
 
-                      <ul className="space-y-2.5 text-xs text-slate-600">
-                        <li className="flex items-start gap-2">
-                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                          <span>14 Days Unlimited OMR Scanning</span>
+                      <ul className="space-y-2 text-[11px] text-slate-600">
+                        <li className="flex items-start gap-1.5">
+                          <Check className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>14 Days Unlimited Scans</span>
                         </li>
-                        <li className="flex items-start gap-2">
-                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <li className="flex items-start gap-1.5">
+                          <Check className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                           <span>Full WAEC & Terminal Reports</span>
                         </li>
-                        <li className="flex items-start gap-2">
-                          <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                          <span>No Recurring Commitment</span>
+                        <li className="flex items-start gap-1.5">
+                          <Check className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>No Recurring Lock</span>
                         </li>
                       </ul>
                     </div>
 
-                    <div className="p-5 bg-slate-50 border-t border-slate-100">
+                    <div className="p-4 bg-slate-50 border-t border-slate-100">
                       {activePass ? (
-                        <div className="w-full py-2.5 px-3 bg-amber-100 text-amber-900 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5 border border-amber-300">
+                        <div className="w-full py-2 px-3 bg-amber-100 text-amber-900 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5 border border-amber-300">
                           <CheckCircle2 className="w-4 h-4 text-amber-600" />
-                          <span>Pass Active Now</span>
+                          <span>Pass Active</span>
                         </div>
                       ) : (
                         <button
@@ -648,57 +649,67 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                               passDays: 14,
                             })
                           }
-                          className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                         >
-                          <span>Buy Pass via MoMo</span>
+                          <span>Buy via MoMo</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
                   </div>
 
-                  {/* 3. TEACHER PRO & SCHOOL LICENSE */}
-                  {SUBSCRIPTION_PLANS.slice(1).map((plan) => {
-                    const isCurrent = userProfile.activeSubscriptionPlan === plan.id;
+                  {/* 3. TEACHER PRO TIERS (MONTHLY, QUARTERLY/TERM, YEARLY) */}
+                  {SUBSCRIPTION_PLANS.filter((plan) => plan.id !== 'Free').map((plan) => {
+                    const isCurrent = userProfile.activeSubscriptionPlan === plan.id ||
+                      (plan.id === 'Teacher Pro Monthly' && userProfile.activeSubscriptionPlan === 'Teacher Pro');
+                    const isYearly = plan.id === 'Teacher Pro Year';
+                    const isTerm = plan.id === 'Teacher Pro Term';
                     
                     return (
                       <div
                         key={plan.id}
                         className={`bg-white rounded-2xl border transition-all flex flex-col justify-between relative overflow-hidden ${
-                          plan.popular
-                            ? 'border-2 border-emerald-500 shadow-xl scale-[1.02]'
+                          isTerm
+                            ? 'border-2 border-emerald-500 shadow-xl scale-[1.01]'
+                            : isYearly
+                            ? 'border-2 border-indigo-500 shadow-md hover:shadow-lg'
                             : 'border-slate-200 shadow-sm hover:shadow-md'
                         }`}
                       >
-                        {plan.popular && (
-                          <div className="bg-emerald-600 text-white text-[11px] font-extrabold uppercase tracking-widest text-center py-1 font-sans">
-                            Most Popular
+                        {isTerm && (
+                          <div className="bg-emerald-600 text-white text-[10px] font-extrabold uppercase tracking-widest text-center py-0.5 font-sans">
+                            Most Popular (Term)
+                          </div>
+                        )}
+                        {isYearly && (
+                          <div className="bg-indigo-600 text-white text-[10px] font-extrabold uppercase tracking-widest text-center py-0.5 font-sans">
+                            Best Value (Save GH₵ 50)
                           </div>
                         )}
 
-                        <div className="p-5 sm:p-6 space-y-4">
+                        <div className="p-4 sm:p-5 space-y-3">
                           <div>
-                            <h3 className="font-bold text-lg text-slate-900">{plan.name}</h3>
-                            <p className="text-xs text-slate-500 mt-1 min-h-[32px]">{plan.tagline}</p>
+                            <h3 className="font-bold text-base text-slate-900">{plan.name}</h3>
+                            <p className="text-[11px] text-slate-500 mt-1 min-h-[28px]">{plan.tagline}</p>
                           </div>
 
                           <div className="py-2 border-y border-slate-100">
-                            <div className="text-2xl font-black text-emerald-700">{plan.priceTag}</div>
+                            <div className={`text-xl font-black ${isYearly ? 'text-indigo-700' : 'text-emerald-700'}`}>{plan.priceTag}</div>
                           </div>
 
-                          <ul className="space-y-2.5 text-xs text-slate-600">
+                          <ul className="space-y-2 text-[11px] text-slate-600">
                             {plan.features.map((feat, idx) => (
-                              <li key={idx} className="flex items-start gap-2">
-                                <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                              <li key={idx} className="flex items-start gap-1.5">
+                                <Check className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${isYearly ? 'text-indigo-600' : 'text-emerald-600'}`} />
                                 <span>{feat}</span>
                               </li>
                             ))}
                           </ul>
                         </div>
 
-                        <div className="p-5 bg-slate-50 border-t border-slate-100">
+                        <div className="p-4 bg-slate-50 border-t border-slate-100">
                           {isCurrent ? (
-                            <div className="w-full py-2.5 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
+                            <div className="w-full py-2 px-3 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl text-center flex items-center justify-center gap-1.5">
                               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                               <span>Current Active Plan</span>
                             </div>
@@ -713,9 +724,11 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                                   planId: plan.id,
                                 })
                               }
-                              className={`w-full py-2.5 px-3 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                plan.popular
+                              className={`w-full py-2 px-3 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                isTerm
                                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                  : isYearly
+                                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
                                   : 'bg-slate-900 hover:bg-slate-800 text-white'
                               }`}
                             >
@@ -858,12 +871,12 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                       disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_YEAR}
                       className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
                     >
-                      Redeem 2000 Pts
+                      Redeem {REDEEM_POINT_COSTS.SCHOOL_LICENSE_YEAR} Pts
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto">
                   {/* 2-Week Pass */}
                   <div className="bg-white border-2 border-amber-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
                     <div>
@@ -914,31 +927,6 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                       className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
                     >
                       Redeem 200 Pts
-                    </button>
-                  </div>
-
-                  {/* School License */}
-                  <div className="bg-white border-2 border-indigo-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
-                    <div>
-                      <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold uppercase">1 Term License</span>
-                      <h4 className="font-bold text-slate-900 text-base mt-2">School Admin License</h4>
-                      <div className="text-xl font-black text-indigo-700 mt-1">{REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM} Points</div>
-                      <p className="text-xs text-slate-500 mt-2">Centralized Collections Hub, inventory & multi-staff sync.</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const res = redeemPointsForPlan('school', userProfile);
-                        if (res.success && res.updatedProfile) {
-                          onUpdateProfile(res.updatedProfile);
-                          alert(res.message);
-                        } else {
-                          alert(res.message);
-                        }
-                      }}
-                      disabled={(userProfile.rewardPoints || 0) < REDEEM_POINT_COSTS.SCHOOL_LICENSE_TERM}
-                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
-                    >
-                      Redeem 1000 Pts
                     </button>
                   </div>
                 </div>

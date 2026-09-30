@@ -16,11 +16,11 @@ import {
   UserProfile, ClassSettings, AnswerKey, GradedResult, ScreenId, QuestionConfidence,
   SchoolMode, UserRole, SchoolProfile
 } from './types';
-import { processOMRSheetImage, simulateStudentSheet, ScanPreset } from './services/omrService';
+import { processOMRSheetImage, simulateStudentSheet, ScanPreset, getEffectiveKeyAnswer } from './services/omrService';
+import { CameraViewfinder } from './components/CameraViewfinder';
 import { 
   ScanIllustration, GradeIllustration, OfflineIllustration, ShrugIllustration, TeacherAvatar 
 } from './components/TeacherIllustrations';
-import { CameraViewfinder } from './components/CameraViewfinder';
 import { AnswerKeyEditorPanel } from './components/AnswerKeyEditorPanel';
 import { ReviewFlagsPanel } from './components/ReviewFlagsPanel';
 import { TerminalReportModule } from './components/TerminalReportModule';
@@ -41,15 +41,21 @@ import { PaywallModal } from './components/PaywallModal';
 import { ReferralHubModal } from './components/ReferralHubModal';
 import { GradeSlipModal } from './components/GradeSlipModal';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal';
+import { ScanOptionsModal } from './components/ScanOptionsModal';
+import { CBTHubModule } from './components/CBTHubModule';
+import { CBTStudentPortal } from './components/CBTStudentPortal';
+import { getLetterGrade, getItemizedDiagnostics, formatSequentialCorrectRanges } from './utils/gradeSlipUtils';
 import { 
   canScanOMR, hasProAccess, hasSchoolLicense, 
   LicenseVoucher, PRESET_WORKSHOP_VOUCHERS, validateAndRedeemVoucher 
 } from './services/subscriptionService';
 import { supabase, dbService } from './services/supabaseClient';
+import { CBTExam, CBTSubmission } from './types';
 
 export default function App() {
   // --- STATE PERSISTENCE & INITIAL SEEDING ---
   const [activeScreen, setActiveScreen] = useState<ScreenId>(ScreenId.SPLASH);
+  const [cbtStudentPin, setCbtStudentPin] = useState<string>('');
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
   const [splashStatusText, setSplashStatusText] = useState<string>("Initializing offline engine...");
@@ -94,10 +100,12 @@ export default function App() {
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState<boolean>(false);
   const [isPaywallModalOpen, setIsPaywallModalOpen] = useState<boolean>(false);
   const [isReferralModalOpen, setIsReferralModalOpen] = useState<boolean>(false);
+  const [isScanOptionsModalOpen, setIsScanOptionsModalOpen] = useState<boolean>(false);
   const [gradeSlipModalResult, setGradeSlipModalResult] = useState<GradedResult | null>(null);
   const [paywallInfo, setPaywallInfo] = useState<{ title?: string; description?: string; featureTriggered?: string }>({});
   const [dashboardCategory, setDashboardCategory] = useState<'all' | 'assessment' | 'classroom' | 'operations' | 'community'>('all');
   const [dashboardSearch, setDashboardSearch] = useState<string>('');
+  const [capturedLiveAnswers, setCapturedLiveAnswers] = useState<{ [key: number]: string } | null>(null);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const cached = localStorage.getItem('omr_user_profile');
@@ -197,6 +205,30 @@ export default function App() {
     return '';
   });
 
+  // Helper to sync user profile and subscription from Supabase
+  const syncProfileFromDB = async (email: string, userRole?: UserRole) => {
+    if (!email) return;
+    try {
+      const res = await dbService.getRows('user_profiles');
+      if (res.success && Array.isArray(res.data)) {
+        const userProf = res.data.find((p: any) => p.email?.toLowerCase() === email.toLowerCase());
+        if (userProf) {
+          setUserProfile((prev) => ({
+            ...prev,
+            activeSubscriptionPlan: userProf.activeSubscriptionPlan || userProf.active_subscription_plan || prev.activeSubscriptionPlan || 'Free',
+            isPremium: userProf.isPremium ?? userProf.is_premium ?? (userProf.active_subscription_plan && userProf.active_subscription_plan !== 'Free' ? true : prev.isPremium),
+            rewardPoints: userProf.rewardPoints ?? userProf.reward_points ?? prev.rewardPoints ?? 0,
+            smsCredits: userProf.smsCredits ?? userProf.sms_credits ?? prev.smsCredits ?? 10,
+            endOfTermPassExpiry: userProf.endOfTermPassExpiry || userProf.end_of_term_pass_expiry || prev.endOfTermPassExpiry,
+            schoolLicenseExpiry: userProf.schoolLicenseExpiry || userProf.school_license_expiry || prev.schoolLicenseExpiry,
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn("Could not sync user profile from DB:", e);
+    }
+  };
+
   // Listen to Supabase Auth State & Restore Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
@@ -212,6 +244,9 @@ export default function App() {
           isLoggedIn: true,
           role: role,
         }));
+        if (u.email) {
+          syncProfileFromDB(u.email, role);
+        }
       }
     });
 
@@ -228,12 +263,17 @@ export default function App() {
           isLoggedIn: true,
           role: role,
         }));
+        if (u.email) {
+          syncProfileFromDB(u.email, role);
+        }
       } else if (event === 'SIGNED_OUT') {
         setUserProfile((prev) => ({
           ...prev,
           email: '',
           fullName: '',
-          isLoggedIn: false
+          isLoggedIn: false,
+          isPremium: false,
+          activeSubscriptionPlan: 'Free',
         }));
       }
     });
@@ -278,6 +318,8 @@ export default function App() {
               role: assignedRole,
               referral_code: generatedRefCode,
               bonus_points: earnedBonusPoints,
+              active_subscription_plan: 'Free',
+              is_premium: false,
             },
           },
         });
@@ -291,7 +333,7 @@ export default function App() {
         const user = signUpData.user;
         const fullName = cleanName || user?.email?.split('@')[0] || 'Teacher';
 
-        // Save / Upsert Profile in Supabase
+        // Save / Upsert Profile in Supabase (Default: Free Tier)
         if (user) {
           await dbService.upsertRow('user_profiles', {
             id: user.id,
@@ -300,6 +342,8 @@ export default function App() {
             email: cleanEmail,
             role: assignedRole,
             school_name: linkedSchool?.name || '',
+            active_subscription_plan: 'Free',
+            is_premium: false,
           });
         }
 
@@ -308,11 +352,14 @@ export default function App() {
           email: cleanEmail,
           fullName: fullName,
           isLoggedIn: true,
-          isPremium: true,
+          isPremium: false, // Default to FREE tier upon registration
+          activeSubscriptionPlan: 'Free', // Default to Free Forever
           rewardPoints: (prev.rewardPoints || 0) + earnedBonusPoints,
           referralCode: generatedRefCode,
           syncEnabled: true,
           offlineCount: 0,
+          endOfTermPassExpiry: null,
+          schoolLicenseExpiry: null,
         }));
 
         if (earnedBonusPoints > 0) {
@@ -353,6 +400,8 @@ export default function App() {
           syncEnabled: true,
           offlineCount: 0,
         }));
+
+        syncProfileFromDB(cleanEmail, role);
 
         if (role === 'headteacher') {
           setActiveScreen(ScreenId.HEADTEACHER_PANEL);
@@ -513,9 +562,27 @@ export default function App() {
     localStorage.setItem('omr_graded_results', JSON.stringify(resultsList));
   }, [resultsList]);
 
+  // Check if URL has ?cbt=123456 or ?pin=123456 to go directly to Student CBT Portal
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlPin = params.get('cbt') || params.get('pin');
+      if (urlPin) {
+        setCbtStudentPin(urlPin);
+        setActiveScreen(ScreenId.CBT_STUDENT_PORTAL);
+      }
+    } catch {}
+  }, []);
+
   // Handle Splash auto transition with smooth animated progress
   useEffect(() => {
     if (activeScreen === ScreenId.SPLASH) {
+      // If student clicked a direct CBT link, don't show splash
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('cbt') || params.get('pin')) {
+        return;
+      }
+
       setSplashProgress(0);
       setSplashStatusText("Initializing offline engine...");
       const startTime = Date.now();
@@ -551,6 +618,37 @@ export default function App() {
     if (!isOnline) return;
     setResultsList(prev => prev.map(r => ({ ...r, status: 'Synced' })));
     setUserProfile(p => ({ ...p, offlineCount: 0 }));
+  };
+
+  // Import CBT Submissions to Graded Results
+  const handleImportCBTSubmissionsToGradedResults = (cbtSubs: CBTSubmission[], exam: CBTExam) => {
+    const newResults: GradedResult[] = cbtSubs.map((sub) => ({
+      id: `cbt_res_${sub.id}`,
+      candidateName: sub.studentName,
+      candidateId: sub.studentId,
+      testName: `${exam.subject} - ${exam.title} (CBT)`,
+      className: sub.className || exam.className,
+      score: sub.score,
+      totalQuestions: sub.totalQuestions,
+      percentage: sub.percentage,
+      scannedAt: sub.submittedAt,
+      answers: sub.answers,
+      status: "Synced",
+      flaggedCount: 0,
+      answerKeyId: exam.id,
+      imageThumbnail: ""
+    }));
+
+    setResultsList(prev => {
+      const existingIds = new Set(prev.map(r => r.id));
+      const filteredNew = newResults.filter(r => !existingIds.has(r.id));
+      return [...filteredNew, ...prev];
+    });
+
+    setUserProfile(prev => ({
+      ...prev,
+      scansThisMonth: (prev.scansThisMonth || 0) + newResults.length
+    }));
   };
 
   // --- SCREEN RENDERERS ---
@@ -947,7 +1045,7 @@ export default function App() {
                 </button>
               </form>
 
-              <div className="text-center mt-3 sm:mt-4">
+              <div className="text-center mt-3 sm:mt-4 space-y-3">
                 <button
                   id="btn_toggle_auth_mode"
                   onClick={() => setIsRegistering(!isRegistering)}
@@ -955,6 +1053,23 @@ export default function App() {
                   style={{color:'#3b6ff5'}}
                 >
                   {isRegistering ? "Already have an account? Log In" : "Need an account? Sign up"}
+                </button>
+
+                {/* Direct Student CBT Portal Jump Button */}
+                <button
+                  type="button"
+                  id="btn_student_cbt_direct"
+                  onClick={() => setActiveScreen(ScreenId.CBT_STUDENT_PORTAL)}
+                  className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 text-indigo-950 font-black rounded-xl text-xs flex items-center justify-between shadow-xs transition cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">📱</span>
+                    <div className="text-left">
+                      <span className="block font-black text-indigo-900">Are you a Student?</span>
+                      <span className="block text-[10px] text-indigo-600 font-medium">Click here to take an online CBT test with PIN</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-indigo-600" />
                 </button>
               </div>
 
@@ -1281,36 +1396,21 @@ export default function App() {
             const allDashboardCards = [
               // 1. Assessment & Grading
               {
-                id: "card_action_scan",
+                id: "card_action_cbt_hub",
                 category: "assessment",
                 categoryName: "Exams & Grading",
                 categoryIcon: FileText,
-                title: "Scan Sheets",
-                description: "Camera viewfinder for instant OMR bubble scanning.",
-                badge: "Fast Engine",
-                badgeStyle: { background: 'rgba(59,111,245,0.12)', color: '#3b6ff5', border: '1px solid rgba(59,111,245,0.25)' },
-                topGradient: 'linear-gradient(90deg,#3b6ff5,#5c94ff)',
-                iconBg: 'rgba(59,111,245,0.12)',
-                iconBorder: 'rgba(59,111,245,0.2)',
-                icon: <Camera className="w-5 h-5" style={{ color: '#3b6ff5' }} />,
-                onClick: () => {
-                  if (savedKeys.length > 0) { setActiveAnswerKey(savedKeys[0]); }
-                  setActiveScreen(ScreenId.CAMERA_SCAN);
-                }
-              },
-              {
-                id: "card_action_keys",
-                category: "assessment",
-                categoryName: "Exams & Grading",
-                categoryIcon: FileText,
-                title: "Answer Keys",
-                description: "Configure master keys and create test patterns.",
-                topGradient: 'linear-gradient(90deg,#10b981,#6ee7b7)',
-                iconBg: 'rgba(16,185,129,0.12)',
-                iconBorder: 'rgba(16,185,129,0.2)',
-                icon: <FileText className="w-5 h-5" style={{ color: '#10b981' }} />,
+                title: "Digital CBT Exam Link",
+                description: "Online objective tests, 6-digit PINs, zero bubble errors & instant grading sync.",
+                badge: "RECOMMENDED",
+                badgeStyle: { background: 'rgba(99,102,241,0.15)', color: '#4f46e5', border: '1px solid rgba(99,102,241,0.3)' },
+                badgePulse: true,
+                topGradient: 'linear-gradient(90deg,#6366f1,#8b5cf6)',
+                iconBg: 'rgba(99,102,241,0.12)',
+                iconBorder: 'rgba(99,102,241,0.2)',
+                icon: <QrCode className="w-5 h-5" style={{ color: '#6366f1' }} />,
                 showArrow: true,
-                onClick: () => setActiveScreen(ScreenId.SAVED_ANSWER_KEYS)
+                onClick: () => setActiveScreen(ScreenId.CBT_HUB)
               },
               {
                 id: "card_action_exam_builder",
@@ -1329,18 +1429,24 @@ export default function App() {
                 onClick: () => setActiveScreen(ScreenId.EXAM_BUILDER)
               },
               {
-                id: "card_action_settings",
+                id: "card_action_scan",
                 category: "assessment",
                 categoryName: "Exams & Grading",
                 categoryIcon: FileText,
-                title: "Test Setup",
-                description: "Configure class rosters, questions count & grade thresholds.",
-                topGradient: 'linear-gradient(90deg,#64748b,#94a3b8)',
-                iconBg: 'rgba(100,116,139,0.12)',
-                iconBorder: 'rgba(100,116,139,0.2)',
-                icon: <Sliders className="w-5 h-5" style={{ color: '#64748b' }} />,
-                showArrow: true,
-                onClick: () => setActiveScreen(ScreenId.TEST_CLASS_SETTINGS)
+                title: "Grade Assessment",
+                description: "Digital CBT links, rapid keypad score entry & instant report slips.",
+                badge: "FAST ENTRY",
+                badgeStyle: { background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)' },
+                topGradient: 'linear-gradient(90deg,#10b981,#3b6ff5)',
+                iconBg: 'rgba(16,185,129,0.12)',
+                iconBorder: 'rgba(16,185,129,0.2)',
+                icon: <Award className="w-5 h-5" style={{ color: '#10b981' }} />,
+                onClick: () => {
+                  if (savedKeys.length > 0 && !activeAnswerKey) { 
+                    setActiveAnswerKey(savedKeys[0]); 
+                  }
+                  setIsScanOptionsModalOpen(true);
+                }
               },
 
               // 2. Classroom & Students
@@ -1702,23 +1808,21 @@ export default function App() {
                 <button
                   id="btn_no_sheets_scan"
                   onClick={() => {
-                    if (savedKeys.length > 0) setActiveAnswerKey(savedKeys[0]);
-                    setActiveScreen(ScreenId.CAMERA_SCAN);
+                    if (savedKeys.length > 0 && !activeAnswerKey) {
+                      setActiveAnswerKey(savedKeys[0]);
+                    }
+                    setIsScanOptionsModalOpen(true);
                   }}
-                  className="py-2.5 px-6 btn-primary rounded-xl text-xs"
+                  className="py-2.5 px-6 btn-primary rounded-xl text-xs flex items-center gap-1.5 mx-auto cursor-pointer"
                 >
-                  Start First Scan
+                  <Camera className="w-4 h-4" />
+                  <span>Start First Scan</span>
                 </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {resultsList.slice(0, 4).map((res) => {
-                  const letterGrade = res.percentage >= classSettings.gradingScale.A ? 'A' 
-                    : res.percentage >= classSettings.gradingScale.B ? 'B'
-                    : res.percentage >= classSettings.gradingScale.C ? 'C'
-                    : 'D';
-                  const gradeColor = letterGrade === 'A' ? '#10b981' : letterGrade === 'B' ? '#3b6ff5' : letterGrade === 'C' ? '#f59e0b' : '#ef4444';
-                  const gradeBg   = letterGrade === 'A' ? 'rgba(16,185,129,0.08)' : letterGrade === 'B' ? 'rgba(59,111,245,0.08)' : letterGrade === 'C' ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
+                  const { grade: letterGrade, color: gradeColor, bg: gradeBg } = getLetterGrade(res.percentage || 0, classSettings?.gradingScale);
                   
                   return (
                     <div 
@@ -1787,14 +1891,92 @@ export default function App() {
   };
 
   // 5. CAMERA SCAN is loaded as full screen component from `./components/CameraViewfinder.tsx`
-  const handleScanCapture = (imageUrl: string, scanPreset: ScanPreset, studentName: string) => {
+  const handleScanCapture = (imageUrl: string, scanPreset: ScanPreset, studentName: string, initialAnswers?: { [key: number]: string }) => {
     setCurrentScannedImage(imageUrl);
     setCurrentScanPreset(scanPreset);
     setIsCurrentScanAmbiguous(scanPreset === 'sim_audit');
     setTempStudentName(studentName);
-    
-    // Automatically advance to Screen 6: "Confirm Image"
-    setActiveScreen(ScreenId.CONFIRM_IMAGE);
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      setCapturedLiveAnswers(initialAnswers);
+    } else {
+      setCapturedLiveAnswers(null);
+    }
+
+    const targetKey = activeAnswerKey || (savedKeys.length > 0 ? savedKeys[0] : null);
+    if (targetKey) {
+      // Auto-evaluate instantly and pop up Results Summary directly!
+      triggerProcessGrading(targetKey, initialAnswers, imageUrl, studentName);
+    } else {
+      // Advance to Screen 6: "Confirm Image" if no key is configured yet
+      setActiveScreen(ScreenId.CONFIRM_IMAGE);
+    }
+  };
+
+  const handleDirectSnapPhoto = (file: File, targetKey: AnswerKey, candidateName: string) => {
+    setIsAnalyzingOMR(true);
+    setCurrentScanPreset('cv_real');
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string;
+      if (dataUrl) {
+        setCurrentScannedImage(dataUrl);
+        setTempStudentName(candidateName);
+        setActiveAnswerKey(targetKey);
+        setCapturedLiveAnswers(null);
+        await triggerProcessGrading(targetKey, null, dataUrl, candidateName);
+      } else {
+        setIsAnalyzingOMR(false);
+      }
+    };
+    reader.onerror = () => {
+      setIsAnalyzingOMR(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDirectUploadPhotos = async (files: FileList | File[], targetKey: AnswerKey, startingCandidateName: string) => {
+    setIsAnalyzingOMR(true);
+    setCurrentScanPreset('cv_real');
+    setActiveAnswerKey(targetKey);
+    setCapturedLiveAnswers(null);
+
+    const fileArray = Array.from(files);
+    if (fileArray.length === 1) {
+      handleDirectSnapPhoto(fileArray[0], targetKey, startingCandidateName);
+      return;
+    }
+
+    try {
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        const studentName = i === 0 
+          ? startingCandidateName 
+          : `${startingCandidateName.replace(/#\d+/, '')} #${resultsList.length + i + 1}`;
+
+        await new Promise<void>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const dataUrl = e.target?.result as string;
+            if (dataUrl) {
+              try {
+                const confLog = await processOMRSheetImage(dataUrl, cornerAnchors, targetKey.questionsCount, targetKey);
+                saveGradedResultAndAdvance(confLog, targetKey, studentName, dataUrl);
+              } catch (err) {
+                console.warn('Batch scan item error:', err);
+              }
+            }
+            resolve();
+          };
+          reader.onerror = () => resolve();
+          reader.readAsDataURL(file);
+        });
+      }
+      setIsAnalyzingOMR(false);
+      setActiveScreen(ScreenId.RESULTS_HISTORY);
+    } catch (e) {
+      console.warn('Direct upload error:', e);
+      setIsAnalyzingOMR(false);
+    }
   };
 
   const handleSpeedInkFastSave = (newResult: GradedResult, imageDataUrl: string) => {
@@ -1855,9 +2037,12 @@ export default function App() {
           <div className="flex items-center gap-2 sm:gap-3">
             <button 
               id="btn_back_confirm_image"
-              onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
+              onClick={() => {
+                setActiveScreen(ScreenId.DASHBOARD);
+                setIsScanOptionsModalOpen(true);
+              }}
               className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
-              title="Back to Camera"
+              title="Back to Grading Options"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
@@ -1867,11 +2052,11 @@ export default function App() {
             </div>
           </div>
           <button
-            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
-            className="text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-emerald-200 transition flex items-center gap-1"
+            onClick={() => setIsScanOptionsModalOpen(true)}
+            className="text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-emerald-200 transition flex items-center gap-1 cursor-pointer"
           >
             <Camera className="w-3.5 h-3.5" />
-            <span>Retake</span>
+            <span>Retake Photo</span>
           </button>
         </div>
 
@@ -1994,7 +2179,7 @@ export default function App() {
                     setActiveScreen(ScreenId.DEFINE_ANSWER_KEY);
                   }
                 }}
-                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-98 text-white font-extrabold rounded-xl transition text-xs sm:text-sm shadow-md flex items-center justify-center gap-2"
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-98 text-white font-extrabold rounded-xl transition text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
                 <span>Grade Now with {activeAnswerKey?.title || savedKeys[0]?.title || 'Master Key'}</span>
@@ -2024,56 +2209,141 @@ export default function App() {
     triggerProcessGrading(key);
   };
 
-  const triggerProcessGrading = async (targetKey: AnswerKey) => {
+  const triggerProcessGrading = async (
+    targetKey: AnswerKey,
+    overrideLiveAnswers?: { [key: number]: string } | null,
+    overrideImage?: string,
+    overrideStudentName?: string
+  ) => {
     setIsAnalyzingOMR(true);
     try {
       let confLog: QuestionConfidence[] = [];
+      const imageSrc = overrideImage !== undefined ? overrideImage : currentScannedImage;
+      const liveAnswersMap = overrideLiveAnswers !== undefined ? overrideLiveAnswers : capturedLiveAnswers;
+      const studentNameVal = overrideStudentName !== undefined ? overrideStudentName : tempStudentName;
 
-      const isRealImage = currentScannedImage && (
-        currentScannedImage.startsWith('data:image') || 
-        currentScannedImage.startsWith('blob:') || 
-        currentScannedImage.startsWith('http')
+      const isRealImage = imageSrc && (
+        imageSrc.startsWith('data:image') || 
+        imageSrc.startsWith('blob:') || 
+        imageSrc.startsWith('http')
       );
 
-      if (isRealImage && currentScanPreset !== 'sim_struggling' && currentScanPreset !== 'sim_audit' && currentScanPreset !== 'sim_perfect') {
+      if (isRealImage) {
         // Run Real Computer Vision Optical Mark Recognition on captured/uploaded student sheet!
         confLog = await processOMRSheetImage(
-          currentScannedImage,
+          imageSrc,
           cornerAnchors,
           targetKey.questionsCount,
           targetKey
         );
-      } else {
-        // Run specified simulation preset
-        confLog = simulateStudentSheet(
-          currentScanPreset,
-          targetKey,
-          targetKey.questionsCount
-        );
+      }
+
+      // Merge locked/live answers accurately if available
+      if (liveAnswersMap && Object.keys(liveAnswersMap).length > 0) {
+        const count = targetKey.questionsCount || Object.keys(liveAnswersMap).length || 20;
+        const mergedLog: QuestionConfidence[] = [];
+        for (let q = 1; q <= count; q++) {
+          const liveAns = liveAnswersMap[q];
+          const cvItem = confLog.find(c => c.questionNumber === q);
+          const chosenAns = (liveAns !== undefined && liveAns !== '') ? liveAns : (cvItem?.detected || '');
+          mergedLog.push({
+            questionNumber: q,
+            options: cvItem?.options || { A: 0, B: 0, C: 0, D: 0 },
+            detected: chosenAns,
+            confidence: chosenAns ? 96 : 85,
+            flagged: chosenAns === 'MULTIPLE'
+          });
+        }
+        confLog = mergedLog;
+      } else if (!confLog || confLog.length === 0) {
+        const count = targetKey.questionsCount || 20;
+        const optCount = targetKey.optionsCount || 4;
+        confLog = Array.from({ length: count }, (_, i) => ({
+          questionNumber: i + 1,
+          options: { A: 0, B: 0, C: 0, D: 0, ...(optCount >= 5 ? { E: 0 } : {}) },
+          detected: '',
+          confidence: 50,
+          flagged: false
+        }));
       }
 
       setFlaggedQuestions(confLog);
 
       // Always save and advance to Results Summary so the user sees results immediately!
-      saveGradedResultAndAdvance(confLog, targetKey);
+      saveGradedResultAndAdvance(confLog, targetKey, studentNameVal, imageSrc);
     } catch (err) {
       console.warn('OMR grading error:', err);
-      const fallbackLog = simulateStudentSheet('sim_realistic', targetKey, targetKey.questionsCount);
+      const studentNameVal = overrideStudentName !== undefined ? overrideStudentName : tempStudentName;
+      const imageSrc = overrideImage !== undefined ? overrideImage : currentScannedImage;
+      const count = targetKey?.questionsCount || 20;
+      const fallbackLog: QuestionConfidence[] = Array.from({ length: count }, (_, i) => ({
+        questionNumber: i + 1,
+        options: { A: 0, B: 0, C: 0, D: 0 },
+        detected: (overrideLiveAnswers || capturedLiveAnswers)?.[i + 1] || '',
+        confidence: 80,
+        flagged: false
+      }));
       setFlaggedQuestions(fallbackLog);
-      saveGradedResultAndAdvance(fallbackLog, targetKey);
+      saveGradedResultAndAdvance(fallbackLog, targetKey, studentNameVal, imageSrc);
     } finally {
       setIsAnalyzingOMR(false);
     }
   };
 
-  const saveGradedResultAndAdvance = (resolvedQuestions: QuestionConfidence[], key: AnswerKey) => {
+  const handleDirectManualGrade = (
+    targetKey: AnswerKey,
+    candidateName: string,
+    answers: { [key: number]: string },
+    scoreOverride?: number
+  ) => {
+    const totalQuestions = targetKey.questionsCount || Object.keys(targetKey.answers).length || 20;
+    let score = 0;
+    if (scoreOverride !== undefined) {
+      score = scoreOverride;
+    } else {
+      for (let i = 1; i <= totalQuestions; i++) {
+        const correct = getEffectiveKeyAnswer(targetKey, i);
+        const student = answers[i];
+        if (student && correct && student.toUpperCase() === correct.toUpperCase()) {
+          score++;
+        }
+      }
+    }
+    const percentage = totalQuestions > 0 ? Math.round((score / totalQuestions) * 100) : 0;
+    const newResult: GradedResult = {
+      id: `manual_res_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      candidateName: candidateName.trim() || `Candidate #${resultsList.length + 1}`,
+      candidateId: `CAND-${Math.floor(1000 + Math.random() * 9000)}`,
+      testName: targetKey.title || 'Graded Test',
+      className: targetKey.className || 'General',
+      score,
+      totalQuestions,
+      percentage,
+      scannedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      answers,
+      status: "Synced",
+      flaggedCount: 0,
+      answerKeyId: targetKey.id,
+      imageThumbnail: ""
+    };
+
+    setResultsList(prev => [newResult, ...prev]);
+    setGradeSlipModalResult(newResult);
+  };
+
+  const saveGradedResultAndAdvance = (
+    resolvedQuestions: QuestionConfidence[], 
+    key: AnswerKey,
+    studentNameOverride?: string,
+    imageThumbnailOverride?: string
+  ) => {
     // Count score safely
     let correct = 0;
     const studentAnswers: { [key: number]: string } = {};
 
     resolvedQuestions.forEach(q => {
       const studentChosen = (q.detected || '').trim().toUpperCase();
-      const masterCorrect = (key?.answers ? (key.answers[q.questionNumber] ?? (key.answers as any)[String(q.questionNumber)] ?? 'A') : 'A').trim().toUpperCase();
+      const masterCorrect = getEffectiveKeyAnswer(key, q.questionNumber);
       studentAnswers[q.questionNumber] = studentChosen;
 
       if (studentChosen && studentChosen === masterCorrect) {
@@ -2083,10 +2353,11 @@ export default function App() {
 
     const totalQuestions = key?.questionsCount || resolvedQuestions.length || 10;
     const percentage = Math.round((correct / totalQuestions) * 100);
+    const finalStudentName = studentNameOverride || tempStudentName.trim() || `Candidate #${resultsList.length + 1}`;
 
     const newResult: GradedResult = {
       id: 'res_' + Date.now(),
-      candidateName: tempStudentName.trim() || `Candidate #${resultsList.length + 1}`,
+      candidateName: finalStudentName,
       candidateId: 'STUD_' + Math.floor(100 + Math.random() * 900),
       testName: key.title,
       className: key.className,
@@ -2098,7 +2369,7 @@ export default function App() {
       status: isOnline ? 'Synced' : 'Offline Pending',
       flaggedCount: resolvedQuestions.filter(q => q.flagged).length,
       answerKeyId: key.id,
-      imageThumbnail: currentScannedImage || ''
+      imageThumbnail: imageThumbnailOverride || currentScannedImage || ''
     };
 
     // Save to list
@@ -2122,7 +2393,7 @@ export default function App() {
     let correct = 0;
     for (let i = 1; i <= recentGradedResult.totalQuestions; i++) {
       const studAns = (updatedAnswers[i] || '').trim().toUpperCase();
-      const masterAns = (targetKey.answers ? (targetKey.answers[i] ?? (targetKey.answers as any)[String(i)] ?? 'A') : 'A').trim().toUpperCase();
+      const masterAns = getEffectiveKeyAnswer(targetKey, i);
       if (studAns && studAns === masterAns) {
         correct++;
       }
@@ -2151,22 +2422,20 @@ export default function App() {
           <h3 className="text-sm font-bold text-slate-800">No recent graded sheet found</h3>
           <p className="text-xs text-slate-500 max-w-xs">Start a camera scan or select a previous sheet from history.</p>
           <button
-            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
-            className="py-2.5 px-6 btn-primary rounded-xl text-xs font-bold"
+            onClick={() => setIsScanOptionsModalOpen(true)}
+            className="py-2.5 px-6 btn-primary rounded-xl text-xs font-bold cursor-pointer"
           >
-            Start Camera Scan
+            Start Grading Sheet
           </button>
         </div>
       );
     }
 
-    const letterGrade = recentGradedResult.percentage >= classSettings.gradingScale.A ? 'A' 
-      : recentGradedResult.percentage >= classSettings.gradingScale.B ? 'B'
-      : recentGradedResult.percentage >= classSettings.gradingScale.C ? 'C'
-      : 'D';
+    const { grade: letterGrade } = getLetterGrade(recentGradedResult.percentage || 0, classSettings?.gradingScale);
 
     const isAlice = recentGradedResult.candidateName.includes('Alice');
     const targetKey = savedKeys.find(k => k.id === recentGradedResult.answerKeyId) || activeAnswerKey;
+    const itemizedDiagnostics = getItemizedDiagnostics(recentGradedResult, targetKey?.answers || {});
 
     return (
       <div id="screen_results_summary" className="min-h-screen mesh-light flex flex-col pb-12 relative w-full max-w-full overflow-x-hidden">
@@ -2178,12 +2447,12 @@ export default function App() {
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Adjust Question {editingQuestionNumber} Mark</h3>
                   <p className="text-[11px] text-slate-500 font-mono">
-                    Master Key: <strong className="text-emerald-700">{targetKey?.answers[editingQuestionNumber] || 'A'}</strong>
+                    Master Key: <strong className="text-emerald-700">{getEffectiveKeyAnswer(targetKey, editingQuestionNumber)}</strong>
                   </p>
                 </div>
                 <button 
                   onClick={() => setEditingQuestionNumber(null)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 text-xs"
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 text-xs cursor-pointer"
                 >
                   ✕
                 </button>
@@ -2191,37 +2460,43 @@ export default function App() {
 
               <div className="text-xs text-slate-600">Select candidate's true marked option:</div>
 
-              <div className="grid grid-cols-4 gap-2">
-                {['A', 'B', 'C', 'D'].map((opt) => {
-                  const isCurrent = recentGradedResult.answers[editingQuestionNumber] === opt;
-                  const isKey = targetKey?.answers[editingQuestionNumber] === opt;
-                  return (
-                    <button
-                      key={opt}
-                      onClick={() => handleOverrideSingleQuestion(editingQuestionNumber, opt)}
-                      className={`p-3 rounded-2xl border-2 font-extrabold text-sm transition flex flex-col items-center justify-center gap-1 ${
-                        isCurrent 
-                          ? 'bg-emerald-500 border-emerald-600 text-white shadow-md' 
-                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
-                      }`}
-                    >
-                      <span>{opt}</span>
-                      {isKey && <span className="text-[9px] font-normal opacity-80">Key</span>}
-                    </button>
-                  );
-                })}
-              </div>
+              {(() => {
+                const optCount = targetKey?.optionsCount || 4;
+                const activeOpts = ['A', 'B', 'C', 'D', 'E'].slice(0, optCount);
+                return (
+                  <div className={`grid ${optCount === 3 ? 'grid-cols-3' : (optCount === 5 ? 'grid-cols-5' : 'grid-cols-4')} gap-2`}>
+                    {activeOpts.map((opt) => {
+                      const isCurrent = recentGradedResult.answers[editingQuestionNumber] === opt;
+                      const isKey = getEffectiveKeyAnswer(targetKey, editingQuestionNumber) === opt;
+                      return (
+                        <button
+                          key={opt}
+                          onClick={() => handleOverrideSingleQuestion(editingQuestionNumber, opt)}
+                          className={`p-3 rounded-2xl border-2 font-extrabold text-sm transition flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                            isCurrent 
+                              ? 'bg-emerald-500 border-emerald-600 text-white shadow-md' 
+                              : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                          }`}
+                        >
+                          <span>{opt}</span>
+                          {isKey && <span className="text-[9px] font-normal opacity-80">Key</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
                 <button
                   onClick={() => handleOverrideSingleQuestion(editingQuestionNumber, '')}
-                  className="p-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="p-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
                   Mark as Blank
                 </button>
                 <button
                   onClick={() => setEditingQuestionNumber(null)}
-                  className="p-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
+                  className="p-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 cursor-pointer"
                 >
                   Done
                 </button>
@@ -2236,7 +2511,7 @@ export default function App() {
           <button 
             id="btn_results_summary_dashboard"
             onClick={() => setActiveScreen(ScreenId.DASHBOARD)}
-            className="text-xs font-extrabold text-emerald-600 hover:text-emerald-700 transition shrink-0 whitespace-nowrap"
+            className="text-xs font-extrabold text-emerald-600 hover:text-emerald-700 transition shrink-0 whitespace-nowrap cursor-pointer"
           >
             Go Dashboard
           </button>
@@ -2316,12 +2591,71 @@ export default function App() {
             )}
           </div>
 
+          {/* ITEMIZE STUDENT MISTAKES & DIAGNOSTICS */}
+          {itemizedDiagnostics.length > 0 ? (
+            <div className="glass-card rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm w-full overflow-hidden border border-red-100 bg-red-50/20">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Student Mistakes & Corrections ({itemizedDiagnostics.length} {itemizedDiagnostics.length === 1 ? 'Error' : 'Errors'})
+                  </h4>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md shrink-0">
+                  {Math.round((itemizedDiagnostics.length / (recentGradedResult.totalQuestions || 1)) * 100)}% Missed
+                </span>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {itemizedDiagnostics.map((d) => (
+                  <div 
+                    key={d.questionNumber} 
+                    className="p-2.5 rounded-xl border border-red-200/80 bg-white shadow-xs flex items-center justify-between gap-2 transition hover:border-red-300"
+                  >
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-black text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">
+                          Q{d.questionNumber}
+                        </span>
+                        <span className="text-[11px] text-red-700 font-bold">
+                          Student Chose: <strong className="text-red-900 uppercase font-black">[{d.studentAns}]</strong>
+                        </span>
+                        <span className="text-[11px] text-emerald-700 font-bold">
+                          Key: <strong className="text-emerald-900 uppercase font-black">[{d.keyAns}]</strong>
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium">
+                        {d.diagnostic}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingQuestionNumber(d.questionNumber)}
+                      className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg shrink-0 transition cursor-pointer shadow-xs"
+                    >
+                      Override
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center space-y-1">
+              <div className="flex items-center justify-center gap-1.5 text-emerald-800 font-black text-xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Perfect Score! No Mistakes Detected</span>
+              </div>
+              <p className="text-[11px] text-emerald-700">All {recentGradedResult.totalQuestions} questions matched the master answer key accurately.</p>
+            </div>
+          )}
+
           {/* Question-by-Question Audit Breakdown with Click-to-Override */}
           <div className="glass-card rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm w-full overflow-hidden">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider truncate">Question Mark Log</h4>
-                <p className="text-[10px] text-slate-500 truncate">Tap to adjust bubble</p>
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider truncate">All Questions Mark Log</h4>
+                <p className="text-[10px] text-slate-500 truncate">Tap any row to adjust bubble</p>
               </div>
               <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shrink-0 whitespace-nowrap">
                 {recentGradedResult.score} C • {recentGradedResult.totalQuestions - recentGradedResult.score} E
@@ -2331,7 +2665,7 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2 max-h-64 overflow-y-auto pr-1 w-full">
               {Array.from({ length: recentGradedResult.totalQuestions }, (_, i) => i + 1).map((qNum) => {
                 const studentAnswer = recentGradedResult.answers[qNum] || '';
-                const masterKey = targetKey?.answers[qNum] || 'A';
+                const masterKey = getEffectiveKeyAnswer(targetKey, qNum);
                 const isCorrect = studentAnswer === masterKey;
 
                 return (
@@ -2390,7 +2724,7 @@ export default function App() {
           <button
             id="btn_mark_next_sheet"
             type="button"
-            onClick={() => setActiveScreen(ScreenId.CAMERA_SCAN)}
+            onClick={() => setIsScanOptionsModalOpen(true)}
             className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-xl text-xs tracking-wider uppercase transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
           >
             <Camera className="w-4 h-4 shrink-0" />
@@ -2444,62 +2778,69 @@ export default function App() {
                 <div className="space-y-1">
                   <h5 className="text-sm font-extrabold text-slate-800">No Saved Master Keys Found</h5>
                   <p className="text-xs text-slate-500">
-                    Create a custom answer key or use our standard auto-key pattern (A, B, C, D...) to grade immediately.
+                    Create a custom answer key card or scan your physical master answer sheet.
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2.5 justify-center">
                   <button
                     type="button"
                     onClick={() => {
-                      const count = classSettings.totalQuestions || 20;
-                      const defaultAnswers: { [key: number]: string } = {};
-                      const pattern = ['A', 'B', 'C', 'D', 'C', 'B', 'A', 'D', 'B', 'C', 'D', 'A', 'A', 'B', 'C', 'D', 'A', 'B', 'C', 'D'];
-                      for (let i = 1; i <= count; i++) {
-                        defaultAnswers[i] = pattern[(i - 1) % pattern.length];
-                      }
-                      const defaultKey: AnswerKey = {
-                        id: 'key_std_' + Date.now(),
-                        title: classSettings.testName || 'Standard Assessment',
-                        className: classSettings.className || 'General Class',
-                        questionsCount: count,
-                        answers: defaultAnswers,
-                        createdAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-                      };
-                      setSavedKeys(prev => [defaultKey, ...prev]);
-                      handleChooseAnswerKey(defaultKey);
+                      setTargetEditKey(undefined);
+                      setActiveScreen(ScreenId.ANSWER_KEY_EDITOR);
                     }}
                     className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Use Standard Master Key & Grade</span>
+                    <Plus className="w-4 h-4" />
+                    <span>Create Real Master Key Card</span>
                   </button>
                 </div>
               </div>
             ) : (
-              savedKeys.map((key) => (
-                <div 
-                  key={key.id}
-                  id={`choose_key_item_${key.id}`}
-                  className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-emerald-500 shadow-sm transition"
-                >
-                  <div className="space-y-1">
-                    <h5 className="text-sm font-extrabold text-slate-900">{key.title}</h5>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <span>Class: <strong className="text-slate-700">{key.className}</strong></span>
-                      <span>•</span>
-                      <span>{key.questionsCount} Questions</span>
-                    </div>
-                  </div>
+              savedKeys.map((key) => {
+                const sampleAnswers = Object.entries(key.answers || {})
+                  .slice(0, 6)
+                  .map(([q, a]) => `Q${q}:${a}`)
+                  .join('  ');
 
-                  <button
-                    id={`btn_apply_key_${key.id}`}
-                    onClick={() => handleChooseAnswerKey(key)}
-                    className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold rounded-xl transition shadow cursor-pointer"
+                return (
+                  <div 
+                    key={key.id}
+                    id={`choose_key_item_${key.id}`}
+                    className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-emerald-500 shadow-sm transition"
                   >
-                    Grade with this Key
-                  </button>
-                </div>
-              ))
+                    <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <h5 className="text-sm font-extrabold text-slate-900 truncate">{key.title}</h5>
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded shrink-0 ${
+                          key.optionsCount === 3 
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                            : (key.optionsCount === 5 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200')
+                        }`}>
+                          {key.optionsCount === 3 ? '3-Option (A-C)' : (key.optionsCount === 5 ? '5-Option (A-E)' : '4-Option (A-D)')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <span>Class: <strong className="text-slate-700">{key.className}</strong></span>
+                        <span>•</span>
+                        <span>{key.questionsCount} Questions</span>
+                      </div>
+                      {sampleAnswers && (
+                        <div className="text-[10px] font-mono text-emerald-700 bg-emerald-50/60 px-2 py-0.5 rounded border border-emerald-100/80 truncate">
+                          Key: {sampleAnswers}...
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      id={`btn_apply_key_${key.id}`}
+                      onClick={() => handleChooseAnswerKey(key)}
+                      className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold rounded-xl transition shadow cursor-pointer shrink-0"
+                    >
+                      Grade with this Key
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -2508,7 +2849,7 @@ export default function App() {
               <div className="w-full border-t border-slate-200"></div>
             </div>
             <div className="relative flex justify-center text-[10px] uppercase font-mono font-bold">
-              <span className="bg-slate-50 px-2.5 text-slate-400">OR CREATE NEW</span>
+              <span className="bg-slate-50 px-2.5 text-slate-400">OR CONFIGURE NEW KEY</span>
             </div>
           </div>
 
@@ -2522,7 +2863,7 @@ export default function App() {
             className="w-full py-3 bg-white hover:bg-slate-50 text-slate-800 font-extrabold rounded-xl border-2 border-dashed border-slate-300 hover:border-emerald-500 text-xs transition flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4 text-emerald-500" />
-            <span>Create & Use New Answer Key</span>
+            <span>Create / Scan New Master Key Card</span>
           </button>
         </div>
       </div>
@@ -2619,10 +2960,7 @@ export default function App() {
           ) : (
             <div className="space-y-3 w-full">
               {filteredResults.map((res) => {
-                const letterGrade = res.percentage >= classSettings.gradingScale.A ? 'A' 
-                  : res.percentage >= classSettings.gradingScale.B ? 'B'
-                  : res.percentage >= classSettings.gradingScale.C ? 'C'
-                  : 'D';
+                const { grade: letterGrade } = getLetterGrade(res.percentage || 0, classSettings?.gradingScale);
 
                 return (
                   <div 
@@ -2792,7 +3130,7 @@ export default function App() {
                   id={`key_card_${key.id}`}
                   className="glass-card rounded-2xl p-5 flex flex-col justify-between gap-4 shadow-sm hover:border-emerald-500 transition-all"
                 >
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
                         {key.className}
@@ -2802,7 +3140,43 @@ export default function App() {
                       </span>
                     </div>
                     <h4 className="text-sm font-extrabold text-slate-900">{key.title}</h4>
-                    <p className="text-xs text-slate-500 font-medium">{key.questionsCount} OMR Answer Rows</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-slate-500 font-medium">{key.questionsCount} OMR Rows</p>
+                      <span className="text-slate-300">•</span>
+                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${
+                        key.optionsCount === 3 
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                          : (key.optionsCount === 5 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200')
+                      }`}>
+                        {key.optionsCount === 3 ? '3 Options (A-C)' : (key.optionsCount === 5 ? '5 Options (A-E)' : '4 Options (A-D)')}
+                      </span>
+                    </div>
+
+                    {/* Real Answer Key Preview Chips */}
+                    {key.answers && Object.keys(key.answers).length > 0 && (
+                      <div className="bg-slate-50/80 p-2 rounded-xl border border-slate-200/80 space-y-1">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Master Answers Preview ({Object.keys(key.answers).length} Set):
+                        </span>
+                        <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                          {Array.from({ length: Math.min(key.questionsCount, 20) }, (_, i) => i + 1).map(q => {
+                            const val = (key.answers[q] ?? (key.answers as any)[String(q)] ?? '');
+                            return (
+                              <span key={q} className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-bold border ${
+                                val ? 'bg-white text-emerald-700 border-emerald-200 shadow-2xs' : 'bg-slate-100 text-slate-400 border-slate-200'
+                              }`}>
+                                {q}:{val || '-'}
+                              </span>
+                            );
+                          })}
+                          {key.questionsCount > 20 && (
+                            <span className="text-[9px] font-mono text-slate-400 self-center">
+                              +{key.questionsCount - 20} more
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between pt-3 border-t border-slate-100">
@@ -2813,10 +3187,11 @@ export default function App() {
                           setTargetEditKey(key);
                           setActiveScreen(ScreenId.ANSWER_KEY_EDITOR);
                         }}
-                        className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                        className="p-1.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                        title="Edit real answers"
                       >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Edit</span>
+                        <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Edit / Scan</span>
                       </button>
                       <button
                         id={`btn_delete_key_${key.id}`}
@@ -2825,7 +3200,8 @@ export default function App() {
                             setSavedKeys(prev => prev.filter(k => k.id !== key.id));
                           }
                         }}
-                        className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition"
+                        className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition cursor-pointer"
+                        title="Delete key"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -2835,9 +3211,9 @@ export default function App() {
                       id={`btn_use_key_scan_${key.id}`}
                       onClick={() => {
                         setActiveAnswerKey(key);
-                        setActiveScreen(ScreenId.CAMERA_SCAN);
+                        setIsScanOptionsModalOpen(true);
                       }}
-                      className="py-1.5 px-3 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1"
+                      className="py-1.5 px-3 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer shadow-xs"
                     >
                       <Camera className="w-3 h-3" />
                       <span>Use to Grade</span>
@@ -3300,12 +3676,18 @@ export default function App() {
           <CameraViewfinder 
             onCapture={handleScanCapture}
             onFastSaveNext={handleSpeedInkFastSave}
+            onManualOverride={(answers, name, img) => {
+              const targetKey = activeAnswerKey || (savedKeys.length > 0 ? savedKeys[0] : null);
+              if (targetKey) {
+                triggerProcessGrading(targetKey, answers, img, name);
+              }
+            }}
             onCancel={() => setActiveScreen(ScreenId.DASHBOARD)}
-            testName={classSettings.testName}
-            totalQuestions={classSettings.totalQuestions}
-            activeAnswerKey={activeAnswerKey || savedKeys[0] || null}
+            testName={activeAnswerKey?.title || classSettings.testName || 'OMR Exam'}
+            totalQuestions={activeAnswerKey?.questionsCount || classSettings.totalQuestions || 20}
+            activeAnswerKey={activeAnswerKey || (savedKeys.length > 0 ? savedKeys[0] : null)}
             savedKeys={savedKeys}
-            onSelectKey={(key) => setActiveAnswerKey(key)}
+            onSelectKey={(k) => setActiveAnswerKey(k)}
             existingResultsCount={resultsList.length}
           />
         );
@@ -3352,6 +3734,7 @@ export default function App() {
             <ReviewFlagsPanel 
               questions={flaggedQuestions}
               studentName={tempStudentName}
+              optionsCount={activeAnswerKey?.optionsCount || 4}
               onCancel={() => setActiveScreen(ScreenId.DASHBOARD)}
               onSaveOverrides={(resolved) => {
                 if (activeAnswerKey) {
@@ -3485,7 +3868,35 @@ export default function App() {
             onSaveMasterKeyAndScan={(savedKey) => {
               setSavedKeys(prev => [savedKey, ...prev.filter(k => k.id !== savedKey.id)]);
               setActiveAnswerKey(savedKey);
-              setActiveScreen(ScreenId.CAMERA_SCAN);
+              setIsScanOptionsModalOpen(true);
+            }}
+            onLaunchCBTExam={() => {
+              setActiveScreen(ScreenId.CBT_HUB);
+            }}
+          />
+        );
+      case ScreenId.CBT_HUB:
+        return (
+          <CBTHubModule
+            onBack={() => setActiveScreen(ScreenId.DASHBOARD)}
+            schoolProfile={linkedSchool}
+            selectedClass={selectedAssignedClass}
+            setSelectedClass={setSelectedAssignedClass}
+            onLaunchStudentPortal={(pin) => {
+              setCbtStudentPin(pin || '');
+              setActiveScreen(ScreenId.CBT_STUDENT_PORTAL);
+            }}
+            onImportSubmissionsToGradedResults={handleImportCBTSubmissionsToGradedResults}
+            onOpenExamBuilder={() => setActiveScreen(ScreenId.EXAM_BUILDER)}
+          />
+        );
+      case ScreenId.CBT_STUDENT_PORTAL:
+        return (
+          <CBTStudentPortal
+            initialPin={cbtStudentPin}
+            onBackToApp={() => {
+              setCbtStudentPin('');
+              setActiveScreen(userProfile.isLoggedIn ? ScreenId.CBT_HUB : ScreenId.AUTH);
             }}
           />
         );
@@ -3515,7 +3926,8 @@ export default function App() {
     ScreenId.REVIEW_FLAGS,
     ScreenId.HEADTEACHER_PANEL, 
     ScreenId.SUPER_ADMIN_PANEL, 
-    ScreenId.WORKSHOP_CERTIFICATE
+    ScreenId.WORKSHOP_CERTIFICATE,
+    ScreenId.CBT_STUDENT_PORTAL
   ].includes(activeScreen);
 
   // Desktop Side Navigation Sidebar
@@ -3540,6 +3952,7 @@ export default function App() {
       {
         title: "ASSESSMENTS & REPORTS",
         items: [
+          { id: "desk_side_cbt", label: "Digital CBT Exam Link", icon: QrCode, screen: ScreenId.CBT_HUB, activeScreens: [ScreenId.CBT_HUB] },
           { id: "desk_side_questionbank", label: "WAEC Question Bank", icon: BookOpen, screen: ScreenId.QUESTION_BANK, activeScreens: [ScreenId.QUESTION_BANK] },
           { id: "desk_side_terminal", label: "Terminal Reports", icon: FileText, screen: ScreenId.TERMINAL_REPORT, activeScreens: [ScreenId.TERMINAL_REPORT] },
           { id: "desk_side_exambuilder", label: "Exam Builder", icon: BookOpen, screen: ScreenId.EXAM_BUILDER, activeScreens: [ScreenId.EXAM_BUILDER] },
@@ -3637,18 +4050,20 @@ export default function App() {
           </button>
         </div>
 
-        {/* Action Button: Start New Scan */}
+        {/* Action Button: Grade Assessment */}
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
           <button
             type="button"
             onClick={() => {
-              if (savedKeys.length > 0) setActiveAnswerKey(savedKeys[0]);
-              setActiveScreen(ScreenId.CAMERA_SCAN);
+              if (savedKeys.length > 0 && !activeAnswerKey) {
+                setActiveAnswerKey(savedKeys[0]);
+              }
+              setIsScanOptionsModalOpen(true);
             }}
-            className="w-full py-2.5 px-3 rounded-xl btn-primary flex items-center justify-center gap-2 text-xs font-black shadow-md hover:shadow-lg transition"
+            className="w-full py-2.5 px-3 rounded-xl btn-primary flex items-center justify-center gap-2 text-xs font-black shadow-md hover:shadow-lg transition cursor-pointer"
           >
-            <Camera className="w-4 h-4" />
-            <span>START NEW SCAN</span>
+            <Award className="w-4 h-4" />
+            <span>GRADE ASSESSMENT / CBT</span>
           </button>
         </div>
 
@@ -3754,8 +4169,10 @@ export default function App() {
               id="nav_fab_scan"
               className="nav-fab"
               onClick={() => {
-                if (savedKeys.length > 0) setActiveAnswerKey(savedKeys[0]);
-                setActiveScreen(ScreenId.CAMERA_SCAN);
+                if (savedKeys.length > 0 && !activeAnswerKey) {
+                  setActiveAnswerKey(savedKeys[0]);
+                }
+                setIsScanOptionsModalOpen(true);
               }}
               title="Start new scan"
             >
@@ -3856,10 +4273,44 @@ export default function App() {
         onClose={() => setGradeSlipModalResult(null)}
       />
 
+      <ScanOptionsModal
+        isOpen={isScanOptionsModalOpen}
+        onClose={() => setIsScanOptionsModalOpen(false)}
+        savedKeys={savedKeys}
+        activeAnswerKey={activeAnswerKey || (savedKeys.length > 0 ? savedKeys[0] : null)}
+        onSelectKey={(key) => setActiveAnswerKey(key)}
+        onCreateKey={() => {
+          setIsScanOptionsModalOpen(false);
+          setTargetEditKey(undefined);
+          setActiveScreen(ScreenId.ANSWER_KEY_EDITOR);
+        }}
+        onOpenCBT={() => {
+          setIsScanOptionsModalOpen(false);
+          setActiveScreen(ScreenId.CBT_HUB);
+        }}
+        onDirectManualGrade={handleDirectManualGrade}
+        existingResultsCount={resultsList.length}
+      />
+
       <PrivacyPolicyModal
         isOpen={isPrivacyModalOpen}
         onClose={() => setIsPrivacyModalOpen(false)}
       />
+
+      {/* Global OMR Grading Progress Loading Modal */}
+      {isAnalyzingOMR && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-white space-y-4 animate-fadeIn select-none">
+          <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center shadow-[0_0_30px_rgba(52,211,153,0.5)]">
+            <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
+          </div>
+          <div className="text-center space-y-1.5 max-w-xs">
+            <h3 className="text-base sm:text-lg font-black text-white">Grading Student Sheet...</h3>
+            <p className="text-xs text-emerald-200/90 leading-relaxed">
+              Reading bubble shading & matching answers with <strong>{activeAnswerKey?.title || savedKeys[0]?.title || 'Master Key'}</strong>
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

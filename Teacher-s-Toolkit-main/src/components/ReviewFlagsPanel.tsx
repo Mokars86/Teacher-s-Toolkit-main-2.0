@@ -7,13 +7,15 @@ interface ReviewFlagsPanelProps {
   onSaveOverrides: (updatedQuestions: QuestionConfidence[]) => void;
   onCancel: () => void;
   studentName: string;
+  optionsCount?: number;
 }
 
 export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
   questions,
   onSaveOverrides,
   onCancel,
-  studentName
+  studentName,
+  optionsCount = 4
 }) => {
   const [currentIndex, setCurrentIndex] = useState<number>(() => {
     const firstFlaggedIndex = questions.findIndex(q => q.flagged);
@@ -24,6 +26,7 @@ export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
   );
 
   const currentQuestion = localQuestions[currentIndex] || localQuestions[0];
+  const activeOptions = ['A', 'B', 'C', 'D', 'E'].slice(0, optionsCount);
 
   const handleOverride = (option: string) => {
     const updated = [...localQuestions];
@@ -59,8 +62,8 @@ export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
         <div className="absolute top-2 left-2 text-[10px] font-mono text-slate-400 uppercase">OMR Sensor Macro-Lens Zoom</div>
         
         {/* Scanned crop simulator */}
-        <div className="flex items-center gap-6 my-6">
-          {['A', 'B', 'C', 'D'].map((opt) => {
+        <div className="flex items-center gap-4 sm:gap-6 my-6">
+          {activeOptions.map((opt) => {
             // Let's draw standard smudge mock for Alice Q17 (first flagged)
             const isSmudgedA = qNum === 17 && opt === 'A';
             const isSmudgedB = qNum === 17 && opt === 'B';
@@ -169,12 +172,12 @@ export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
         </div>
 
         {/* Neural confidence details */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-3">
             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">OMR Confidence Log</h4>
             <div className="space-y-2">
-              {['A', 'B', 'C', 'D'].map((opt) => {
-                const conf = currentQuestion.options[opt as 'A' | 'B' | 'C' | 'D'];
+              {activeOptions.map((opt) => {
+                const conf = (currentQuestion.options as any)[opt] || 0;
                 const isSelected = currentQuestion.detected === opt;
                 return (
                   <div key={opt} className="space-y-1">
@@ -210,8 +213,8 @@ export const ReviewFlagsPanel: React.FC<ReviewFlagsPanelProps> = ({
             Override & Resolve Decisive Answer:
           </h4>
           
-          <div className="grid grid-cols-4 gap-2">
-            {['A', 'B', 'C', 'D'].map((opt) => (
+          <div className={`grid ${optionsCount === 3 ? 'grid-cols-3' : (optionsCount === 5 ? 'grid-cols-5' : 'grid-cols-4')} gap-2`}>
+            {activeOptions.map((opt) => (
               <button
                 key={opt}
                 id={`btn_force_${opt}`}

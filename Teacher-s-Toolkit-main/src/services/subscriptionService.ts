@@ -4,46 +4,60 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlanDetails[] = [
   {
     id: 'Free',
     name: 'Free Forever',
-    priceTag: 'GHS 0 / month',
+    priceTag: 'GH₵ 0 / month',
     monthlyGHS: 0,
     tagline: 'Essential tools for individual classroom daily tasks',
     features: [
       'Basic Class Register & Attendance Tracker',
       'Lesson Planner module',
-      'OMR Scanner (Up to 50 papers / month)',
-      'Exam Builder (Up to 3 saved test papers)',
+      'Digital CBT Online Exams (Up to 2 active tests)',
+      'Rapid Keypad Score Entry & Class Broadsheet',
       'Basic Terminal Report Builder (manual entry)',
     ],
   },
   {
-    id: 'Teacher Pro',
-    name: 'Teacher Pro',
-    priceTag: 'GHS 25 / month  (or GHS 150 / year)',
+    id: 'Teacher Pro Monthly',
+    name: 'Teacher Pro (Monthly)',
+    priceTag: 'GH₵ 25 / month',
     monthlyGHS: 25,
-    yearlyGHS: 150,
-    popular: true,
     tagline: 'Supercharge your classroom productivity and save late-night hours',
     features: [
-      'Unlimited OMR Scanning (No monthly cap)',
+      'Unlimited Digital CBT Online Exams & PINs',
+      'Rapid Keypad Score Entry & Grade Processing',
       'Unlimited Exam Builder & 2-Column PDF Export',
       'Bulk Terminal Report PDF Bundles (One-tap class export)',
       'SMS / WhatsApp 1-Tap Parent Alerts & Receipts',
-      'Custom School Branding on Test Papers & Reports',
     ],
   },
   {
-    id: 'School License',
-    name: 'School Admin B2B License',
-    priceTag: 'GHS 750 / term per school',
-    monthlyGHS: 250,
-    termGHS: 750,
-    tagline: 'Complete financial oversight, asset control, and multi-teacher sync for Proprietors & Headteachers',
+    id: 'Teacher Pro Term',
+    name: 'Teacher Pro (Quarterly / Term)',
+    priceTag: 'GH₵ 70 / term',
+    monthlyGHS: 70,
+    termGHS: 70,
+    popular: true,
+    tagline: 'Full academic term access for continuous grading, CBT exams & terminal reports',
     features: [
-      'Centralized Collections Hub (School Fees, PTA Levies, Canteen)',
-      'Resource & Textbook Inventory tracking',
-      'Multi-Teacher Score Sync to Headteacher Portal',
-      'Custom School Crest, Digital Headteacher Signature & Reports',
-      'All Teacher Pro features included for all staff',
+      'Full 3 Months (Term) Unlimited Pro Access',
+      'Unlimited Digital CBT Online Exams & Live Hub',
+      'Rapid Keypad Score Entry with Instant Analytics',
+      'Terminal Report Cards with Automated Position Grading',
+      'WhatsApp & SMS Parent Notification Alerts',
+    ],
+  },
+  {
+    id: 'Teacher Pro Year',
+    name: 'Teacher Pro (Annual / Yearly)',
+    priceTag: 'GH₵ 250 / year',
+    monthlyGHS: 250,
+    yearlyGHS: 250,
+    tagline: 'Best Value! Full 12-month access with maximum savings for dedicated educators',
+    features: [
+      'Full 12-Month Unlimited Pro Access',
+      'Unlimited Digital CBT Portals & Student Access',
+      'Unlimited Exam Papers & Terminal PDF Bundles',
+      'Priority WhatsApp & Customer Support',
+      'Save GH₵ 50 compared to monthly billing',
     ],
   },
 ];
@@ -57,9 +71,9 @@ export const HEADTEACHER_SCHOOL_PLANS: SubscriptionPlanDetails[] = [
     tagline: '7-day short-term institutional license for exam crunch & quick school evaluation',
     features: [
       '7 Days full multi-teacher access & broadsheet sync',
-      'Centralized Collections Hub & Fee Receipts',
+      'Centralized Collections Hub (Fees, PTA & Canteen)',
+      'School-wide Digital CBT Online Exam Hub',
       'Digital Headteacher Signature & School Crest on Reports',
-      'Instant SMS alerts & class score export',
       'Covers all active staff teachers during test week',
     ],
   },
@@ -72,9 +86,9 @@ export const HEADTEACHER_SCHOOL_PLANS: SubscriptionPlanDetails[] = [
     features: [
       'Multi-Teacher Score Sync to Headteacher Portal',
       'Centralized Collections Hub (School Fees, PTA, Canteen)',
+      'School-wide CBT Exams with Instant Score Aggregation',
       'Digital Headteacher Signature & Official School Crest on Reports',
-      'Textbook & Asset Inventory Tracker',
-      'Includes Pro features for all active staff teachers',
+      'Textbook & Asset Inventory Tracker for all classes',
     ],
   },
   {
@@ -95,16 +109,16 @@ export const HEADTEACHER_SCHOOL_PLANS: SubscriptionPlanDetails[] = [
   {
     id: 'School License Year',
     name: 'Annual / Yearly School Plan',
-    priceTag: 'GH₵ 2,000 / year',
-    monthlyGHS: 2000,
-    yearlyGHS: 2000,
+    priceTag: 'GH₵ 1,000 / year',
+    monthlyGHS: 1000,
+    yearlyGHS: 1000,
     tagline: 'Best Value! Full 12-month academic year institutional license with maximum savings',
     features: [
       'Full 12-Month Unlimited Institutional License',
-      'Unlimited Teachers, Classes, Students & OMR Scans',
+      'Unlimited Teachers, Classes, Students & Digital CBT Exams',
       'Priority WhatsApp & SMS Parent Notification Gateway',
       'Dedicated School Support & Custom Broadsheet Layouts',
-      'Save over GH₵ 1,000 compared to monthly billing',
+      'Save over GH₵ 2,000 compared to monthly billing',
     ],
   },
 ];
@@ -115,7 +129,7 @@ export const PAY_AS_YOU_GO_OPTIONS = [
     title: 'End-of-Term 2-Week Pass',
     priceTag: 'GHS 15',
     amountGHS: 15,
-    description: '14 days of Unlimited OMR Scanning & PDF Exports during peak exam grading crunch.',
+    description: '14 days of Unlimited Digital CBT Exams, Rapid Scoring & PDF Exports during peak exam grading crunch.',
     badge: 'Popular for Exams',
   },
 ];
@@ -126,22 +140,30 @@ export function isPassActive(expiryDateString?: string | null): boolean {
   return expiry > Date.now();
 }
 
-export function hasProAccess(profile: UserProfile): boolean {
+export function hasSchoolLicense(profile?: UserProfile | null): boolean {
+  if (!profile) return false;
+  if (profile.role === 'superadmin') return true;
+  return (
+    Boolean(profile.activeSubscriptionPlan?.startsWith('School')) ||
+    profile.activeSubscriptionPlan === 'School License' ||
+    profile.activeSubscriptionPlan === 'School License Weekly' ||
+    profile.activeSubscriptionPlan === 'School License Monthly' ||
+    profile.activeSubscriptionPlan === 'School License Term' ||
+    profile.activeSubscriptionPlan === 'School License Year'
+  );
+}
+
+export function hasProAccess(profile?: UserProfile | null): boolean {
+  if (!profile) return false;
+  if (profile.role === 'superadmin') return true;
   if (
     profile.activeSubscriptionPlan === 'Teacher Pro' || 
-    profile.activeSubscriptionPlan?.includes('School') ||
-    profile.role === 'headteacher'
+    profile.activeSubscriptionPlan?.startsWith('Teacher Pro') ||
+    hasSchoolLicense(profile)
   ) {
     return true;
   }
   return isPassActive(profile.endOfTermPassExpiry);
-}
-
-export function hasSchoolLicense(profile: UserProfile): boolean {
-  return (
-    profile.activeSubscriptionPlan?.includes('School') || 
-    profile.role === 'headteacher'
-  );
 }
 
 export function canScanOMR(profile: UserProfile): { allowed: boolean; remainingScans: number; reason?: string } {

@@ -24,14 +24,17 @@ import {
   Layers,
   Edit3,
   HelpCircle,
-  Key
+  Key,
+  Play,
+  Pause,
+  SlidersHorizontal
 } from 'lucide-react';
-import { ScanPreset, scanOMRFrameFromCanvas, simulateStudentSheet } from '../services/omrService';
+import { ScanPreset, ScanSensitivity, scanOMRFrameFromCanvas, simulateStudentSheet } from '../services/omrService';
 import { AnswerKey, GradedResult } from '../types';
 import { getLetterGrade } from '../utils/gradeSlipUtils';
 
 interface CameraViewfinderProps {
-  onCapture: (imageDataUrl: string, scanPreset: ScanPreset, studentName: string) => void;
+  onCapture: (imageDataUrl: string, scanPreset: ScanPreset, studentName: string, initialAnswers?: { [key: number]: string }) => void;
   onFastSaveNext?: (result: GradedResult, imageDataUrl: string) => void;
   onManualOverride?: (answers: { [key: number]: string }, studentName: string, image: string) => void;
   onCancel: () => void;
@@ -70,16 +73,17 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   const [torchSupported, setTorchSupported] = useState<boolean>(false);
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
 
-  // Sound and Lock status
-  const [speedInkEnabled, setSpeedInkEnabled] = useState<boolean>(true);
+  // Sound and Settings
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [isLiveScanning, setIsLiveScanning] = useState<boolean>(false);
+  const [autoCompleteEnabled, setAutoCompleteEnabled] = useState<boolean>(true);
+  const [sensitivity, setSensitivity] = useState<ScanSensitivity>('normal');
+  const [showSensitivityMenu, setShowSensitivityMenu] = useState<boolean>(false);
 
   // Shutter / Save flash animation
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
   const [savedToast, setSavedToast] = useState<string>('');
 
-  // Continuous paper counter for < 5s rapid grading
+  // Continuous paper counter
   const [paperIndex, setPaperIndex] = useState<number>(existingResultsCount + 1);
   const [simulatedStudentName, setSimulatedStudentName] = useState<string>(`Candidate #${existingResultsCount + 1}`);
   const [selectedPreset, setSelectedPreset] = useState<ScanPreset>('cv_real');
@@ -90,21 +94,55 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   // Selected Answer Key (fall back to first saved key if none active)
   const currentKey = activeAnswerKey || (savedKeys.length > 0 ? savedKeys[0] : null);
   const qCount = currentKey?.questionsCount || totalQuestions || 20;
+  const optionsCount = currentKey?.optionsCount || 4;
+  const activeOptions = ['A', 'B', 'C', 'D', 'E'].slice(0, optionsCount);
 
-  // Live Answers Map (detected from live camera or simulated preset)
+  // Layout Columns
+  const [layoutCols, setLayoutCols] = useState<number>(() => qCount <= 12 ? 1 : (qCount > 30 ? 3 : 2));
+
+  // Live and Fast Sticky Locked Answers
   const [liveAnswers, setLiveAnswers] = useState<{ [key: number]: string }>({});
+  const [lockedAnswers, setLockedAnswers] = useState<{ [key: number]: string }>({});
+  const lockedAnswersRef = useRef<{ [key: number]: string }>({});
+  lockedAnswersRef.current = lockedAnswers;
+
+  // Multi-frame consensus map to eliminate noisy/transient false locks
+  const candidateConsensusRef = useRef<{ [q: number]: { [opt: string]: number } }>({});
+
+  const [currentScanningTarget, setCurrentScanningTarget] = useState<number>(1);
+  const [isAutoCompleting, setIsAutoCompleting] = useState<boolean>(false);
+  const hasAutoCompletedRef = useRef<boolean>(false);
+  const lastLockTimestampRef = useRef<number>(Date.now());
+  const stableLockedFramesRef = useRef<number>(0);
 
   // Helper to safely get the correct key answer for question Q
   const getCorrectKeyAnswer = useCallback((q: number): string => {
     if (!currentKey?.answers) {
-      return ['A', 'B', 'C', 'D'][(q - 1) % 4];
+      return activeOptions[(q - 1) % activeOptions.length];
     }
     const val = currentKey.answers[q] ?? (currentKey.answers as any)[String(q)];
     if (val && typeof val === 'string' && val.trim()) {
       return val.trim().toUpperCase();
     }
-    return ['A', 'B', 'C', 'D'][(q - 1) % 4];
-  }, [currentKey]);
+    return activeOptions[(q - 1) % activeOptions.length];
+  }, [currentKey, activeOptions]);
+
+  // Reset lock when changing key or paper index
+  const handleResetScan = useCallback(() => {
+    setLockedAnswers({});
+    lockedAnswersRef.current = {};
+    candidateConsensusRef.current = {};
+    setLiveAnswers({});
+    setCurrentScanningTarget(1);
+    hasAutoCompletedRef.current = false;
+    setIsAutoCompleting(false);
+    lastLockTimestampRef.current = Date.now();
+    stableLockedFramesRef.current = 0;
+  }, []);
+
+  useEffect(() => {
+    handleResetScan();
+  }, [currentKey, paperIndex, handleResetScan]);
 
   // Generate initial simulated answers if not live computer vision
   useEffect(() => {
@@ -115,21 +153,73 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         map[c.questionNumber] = c.detected;
       });
       setLiveAnswers(map);
+      setLockedAnswers(map);
+      lockedAnswersRef.current = map;
     }
   }, [selectedPreset, currentKey, qCount, paperIndex]);
 
-  // REAL-TIME COMPUTER VISION FRAME ANALYZER LOOP
+  const captureFromVideo = useCallback((): string => {
+    if (!videoRef.current) return '';
+    try {
+      const video = videoRef.current;
+      const width = video.videoWidth || 1280;
+      const height = video.videoHeight || 720;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(video, 0, 0, width, height);
+      return canvas.toDataURL('image/jpeg', 0.92);
+    } catch (e) {
+      console.warn('Canvas capture error:', e);
+      return '';
+    }
+  }, []);
+
+  // AUTO-COMPLETE AND POP RESULT SCREEN TRIGGER
+  const triggerInstantAutoComplete = useCallback((finalAnswers: { [key: number]: string }) => {
+    if (hasAutoCompletedRef.current) return;
+    hasAutoCompletedRef.current = true;
+    setIsAutoCompleting(true);
+    setIsFlashing(true);
+    playGradingFeedbackSound();
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([40, 30, 80]);
+    }
+    setTimeout(() => setIsFlashing(false), 200);
+
+    const capturedUrl = (isCameraActive && videoRef.current) ? captureFromVideo() : '';
+    const finalStudentName = simulatedStudentName.trim() || `Candidate #${paperIndex}`;
+
+    setSavedToast(`🎉 Sheet Graded! Generating report...`);
+
+    setTimeout(() => {
+      onCapture(
+        capturedUrl || 'SPEED_INK_CAPTURE',
+        selectedPreset,
+        finalStudentName,
+        finalAnswers
+      );
+    }, 450);
+  }, [isCameraActive, simulatedStudentName, paperIndex, onCapture, selectedPreset, captureFromVideo]);
+
+  // REAL-TIME COMPUTER VISION FRAME ANALYZER LOOP (SMOOTH & ACCURATE)
   useEffect(() => {
     let intervalId: any;
 
     if (selectedPreset === 'cv_real' && isCameraActive && hasCamera) {
       if (!offscreenCanvasRef.current) {
         offscreenCanvasRef.current = document.createElement('canvas');
+        // Crisp 640x854 processing resolution for high bubble precision
         offscreenCanvasRef.current.width = 640;
-        offscreenCanvasRef.current.height = 800;
+        offscreenCanvasRef.current.height = 854;
       }
 
       intervalId = setInterval(() => {
+        if (hasAutoCompletedRef.current) return;
+
         const video = videoRef.current;
         const canvas = offscreenCanvasRef.current;
         if (!video || !canvas || video.readyState < 2) return;
@@ -140,7 +230,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
 
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          // Grid bounds matching the on-screen visual viewfinder frame
+          // Grid bounds matching on-screen viewfinder
           const corners = {
             tl: { x: canvas.width * 0.08, y: canvas.height * 0.08 },
             tr: { x: canvas.width * 0.92, y: canvas.height * 0.08 },
@@ -154,26 +244,84 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             canvas.height,
             qCount,
             corners,
-            currentKey
+            currentKey,
+            layoutCols,
+            sensitivity
           );
 
-          const updatedMap: { [key: number]: string } = {};
-          detectedResults.forEach(r => {
-            updatedMap[r.questionNumber] = r.detected;
-          });
+          if (detectedResults && detectedResults.length > 0) {
+            let newlyLocked = false;
+            const updatedLocked = { ...lockedAnswersRef.current };
+            const consensusMap = candidateConsensusRef.current;
 
-          setLiveAnswers(updatedMap);
-          setIsLiveScanning(true);
+            for (const r of detectedResults) {
+              const q = r.questionNumber;
+              const detectedOpt = (r.detected || '').trim().toUpperCase();
+
+              if (!updatedLocked[q] && detectedOpt && activeOptions.includes(detectedOpt)) {
+                if (!consensusMap[q]) consensusMap[q] = {};
+                consensusMap[q][detectedOpt] = (consensusMap[q][detectedOpt] || 0) + 1;
+
+                // Lock when confirmed across 3 consistent frames or ultra high confidence
+                if (consensusMap[q][detectedOpt] >= 3 || r.confidence >= 96) {
+                  updatedLocked[q] = detectedOpt;
+                  newlyLocked = true;
+                }
+              }
+            }
+
+            if (newlyLocked) {
+              setLockedAnswers(updatedLocked);
+              lockedAnswersRef.current = updatedLocked;
+              lastLockTimestampRef.current = Date.now();
+              stableLockedFramesRef.current = 0;
+              playGradingFeedbackSound();
+              if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                navigator.vibrate(20);
+              }
+            }
+
+            // Merge locked answers with current frame
+            const mergedLive: { [key: number]: string } = {};
+            for (let i = 1; i <= qCount; i++) {
+              mergedLive[i] = updatedLocked[i] || detectedResults.find(d => d.questionNumber === i)?.detected || '';
+            }
+
+            setLiveAnswers(mergedLive);
+
+            // Target next uncaptured question
+            let nextTarget = 1;
+            while (nextTarget <= qCount && updatedLocked[nextTarget]) {
+              nextTarget++;
+            }
+            setCurrentScanningTarget(nextTarget <= qCount ? nextTarget : qCount);
+
+            const lockedCount = Object.keys(updatedLocked).length;
+
+            if (autoCompleteEnabled) {
+              // 1. Trigger if 100% of questions are locked and held steady for ~1.5s (6 stable frames)
+              if (lockedCount >= qCount) {
+                stableLockedFramesRef.current++;
+                if (stableLockedFramesRef.current >= 6) {
+                  triggerInstantAutoComplete(mergedLive);
+                }
+              } 
+              // 2. Trigger if >= 85% captured and steady for 3.0s (handles blank unshaded student answers)
+              else if (lockedCount >= Math.max(3, Math.floor(qCount * 0.85)) && (Date.now() - lastLockTimestampRef.current > 3000)) {
+                triggerInstantAutoComplete(mergedLive);
+              }
+            }
+          }
         } catch (e) {
           console.warn('Real-time frame scan exception:', e);
         }
-      }, 240); // 4 FPS real-time live vision sampling
+      }, 240); // 4 FPS deliberate scanning rate (prevents jitter, allows clear focusing)
     }
 
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [selectedPreset, isCameraActive, hasCamera, qCount, currentKey]);
+  }, [selectedPreset, isCameraActive, hasCamera, qCount, currentKey, layoutCols, activeOptions, sensitivity, autoCompleteEnabled, triggerInstantAutoComplete]);
 
   // Compute live score
   let calculatedScore = 0;
@@ -188,7 +336,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   const livePercentage = Math.round((calculatedScore / (qCount > 0 ? qCount : 1)) * 100);
   const { grade: liveGrade, color: liveGradeColor } = getLetterGrade(livePercentage);
 
-  // Callback ref to attach stream directly to the video element
+  // Callback ref to attach stream directly to video
   const handleVideoRef = useCallback((node: HTMLVideoElement | null) => {
     videoRef.current = node;
     if (node && streamRef.current) {
@@ -230,7 +378,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setHasCamera(false);
       setIsCameraActive(false);
-      setCameraError('Live camera stream restricted. Tap "Native Cam" or Gallery below.');
+      setCameraError('Live camera stream restricted. Tap "Native Cam" or "Gallery" below.');
       return;
     }
 
@@ -335,26 +483,6 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
   };
 
-  const captureFromVideo = (): string => {
-    if (!videoRef.current) return '';
-    try {
-      const video = videoRef.current;
-      const width = video.videoWidth || 1280;
-      const height = video.videoHeight || 720;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return '';
-      ctx.drawImage(video, 0, 0, width, height);
-      return canvas.toDataURL('image/jpeg', 0.92);
-    } catch (e) {
-      console.warn('Canvas capture error:', e);
-      return '';
-    }
-  };
-
   const playGradingFeedbackSound = () => {
     if (!soundEnabled || typeof window === 'undefined' || !(window.AudioContext || (window as any).webkitAudioContext)) return;
     try {
@@ -419,6 +547,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     setSimulatedStudentName(`Candidate #${nextIdx}`);
   };
 
+  // IMMEDIATE SNAP & GRADE (High Quality Trigger)
   const handleTriggerCapture = () => {
     setIsFlashing(true);
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -434,18 +563,35 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     const finalStudentName = simulatedStudentName.trim() || `Candidate #${paperIndex}`;
 
     onCapture(
-      capturedUrl || 'MOCK_OMR_SHEET_PREVIEW',
-      capturedUrl ? (selectedPreset === 'cv_real' ? 'cv_real' : selectedPreset) : (selectedPreset === 'cv_real' ? 'sim_realistic' : selectedPreset),
-      finalStudentName
+      capturedUrl || 'SPEED_INK_CAPTURE',
+      selectedPreset,
+      finalStudentName,
+      liveAnswers
     );
   };
 
   // Direct toggle on any bubble mark
   const handleManualBubbleToggle = (qNum: number, opt: string) => {
-    setLiveAnswers(prev => ({
-      ...prev,
-      [qNum]: prev[qNum] === opt ? '' : opt
-    }));
+    setLiveAnswers(prev => {
+      const next = { ...prev };
+      if (next[qNum] === opt) {
+        delete next[qNum];
+      } else {
+        next[qNum] = opt;
+      }
+      return next;
+    });
+
+    setLockedAnswers(prev => {
+      const next = { ...prev };
+      if (next[qNum] === opt) {
+        delete next[qNum];
+      } else {
+        next[qNum] = opt;
+      }
+      lockedAnswersRef.current = next;
+      return next;
+    });
   };
 
   const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -476,8 +622,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     }
   };
 
-  // Columns: 2 cols for <= 20 questions, 3 or 4 for > 20
-  const colsCount = qCount > 30 ? 4 : (qCount > 20 ? 3 : (qCount >= 10 ? 2 : 1));
+  const colsCount = layoutCols;
   const questionsPerCol = Math.ceil(qCount / colsCount);
 
   return (
@@ -496,23 +641,33 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         </div>
       )}
 
-      {/* TOP HEADER CONTROLS BAR (Compact for iPhone SE 375x667) */}
+      {/* TOP HEADER CONTROLS BAR */}
       <div className="bg-slate-900/95 backdrop-blur-md px-2 sm:px-4 py-1.5 sm:py-2.5 border-b border-slate-800 flex items-center justify-between z-30 shrink-0 gap-1.5">
         
         {/* Left: Active Answer Key Picker */}
         <div className="flex items-center gap-1">
           <button
             onClick={() => setShowKeySelector(true)}
-            className="flex items-center gap-1 bg-emerald-950/90 text-emerald-300 border border-emerald-600/70 hover:bg-emerald-900 px-2 sm:px-3 py-1 rounded-xl text-[10px] sm:text-xs font-bold transition shadow-xs"
+            className="flex items-center gap-1 bg-emerald-950/90 text-emerald-300 border border-emerald-600/70 hover:bg-emerald-900 px-2 sm:px-3 py-1 rounded-xl text-[10px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
             title="Select Active Answer Key"
           >
             <Key className="w-3 h-3 text-amber-400 shrink-0" />
-            <span className="truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[170px]">
+            <span className="truncate max-w-[70px] xs:max-w-[100px] sm:max-w-[140px]">
               {currentKey?.title || testName || 'Master Key'}
             </span>
             <span className="text-[9px] bg-emerald-800/80 px-1 py-0.2 rounded text-white font-mono">
               {qCount}Q
             </span>
+          </button>
+
+          {/* Layout Column Toggle */}
+          <button
+            onClick={() => setLayoutCols(prev => prev === 1 ? 2 : (qCount > 30 ? (prev === 2 ? 3 : 1) : 1))}
+            className="bg-slate-800/90 hover:bg-slate-700 text-emerald-300 border border-slate-700 px-2 py-1 rounded-xl text-[10px] font-mono font-bold transition flex items-center gap-1 cursor-pointer"
+            title="Toggle 1-Column / 2-Columns layout"
+          >
+            <Sliders className="w-3 h-3 text-emerald-400" />
+            <span>{layoutCols}Col</span>
           </button>
         </div>
 
@@ -524,20 +679,94 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             type="text" 
             value={simulatedStudentName}
             onChange={(e) => setSimulatedStudentName(e.target.value)}
-            className="bg-transparent border-none text-[10px] sm:text-xs font-bold text-white placeholder-slate-400 focus:outline-none w-20 sm:w-32 font-sans text-center"
+            className="bg-transparent border-none text-[10px] sm:text-xs font-bold text-white placeholder-slate-400 focus:outline-none w-16 sm:w-28 font-sans text-center"
             placeholder="Candidate"
           />
         </div>
 
         {/* Right: Action Icons */}
         <div className="flex items-center gap-1 sm:gap-1.5">
+          
+          {/* Sensitivity Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSensitivityMenu(prev => !prev)}
+              className={`p-1.5 sm:p-2 rounded-xl border transition flex items-center gap-1 text-[10px] font-bold ${
+                sensitivity === 'faint_pencil'
+                  ? 'bg-amber-950 text-amber-300 border-amber-500'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
+              }`}
+              title="Scanner Sensitivity (Pencil/Pen)"
+            >
+              <SlidersHorizontal className="w-3 h-3 text-amber-400" />
+              <span className="hidden sm:inline">
+                {sensitivity === 'faint_pencil' ? 'Light Pencil' : (sensitivity === 'pen_marker' ? 'Pen' : 'Standard')}
+              </span>
+            </button>
+
+            {showSensitivityMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-xl p-1.5 shadow-2xl z-50 w-44 space-y-1 animate-fadeIn">
+                <div className="text-[9px] uppercase tracking-wider text-slate-400 font-bold px-1.5 py-0.5">
+                  Scanning Mode
+                </div>
+                <button
+                  onClick={() => { setSensitivity('normal'); setShowSensitivityMenu(false); }}
+                  className={`w-full text-left p-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-between ${
+                    sensitivity === 'normal' ? 'bg-emerald-950 text-emerald-200 font-bold' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span>Standard (Pencil & Pen)</span>
+                  {sensitivity === 'normal' && <Check className="w-3 h-3 text-emerald-400" />}
+                </button>
+                <button
+                  onClick={() => { setSensitivity('faint_pencil'); setShowSensitivityMenu(false); }}
+                  className={`w-full text-left p-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-between ${
+                    sensitivity === 'faint_pencil' ? 'bg-amber-950 text-amber-200 font-bold' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span>Light / Faint Pencil</span>
+                  {sensitivity === 'faint_pencil' && <Check className="w-3 h-3 text-amber-400" />}
+                </button>
+                <button
+                  onClick={() => { setSensitivity('pen_marker'); setShowSensitivityMenu(false); }}
+                  className={`w-full text-left p-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-between ${
+                    sensitivity === 'pen_marker' ? 'bg-indigo-950 text-indigo-200 font-bold' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span>Ballpoint & Marker</span>
+                  {sensitivity === 'pen_marker' && <Check className="w-3 h-3 text-indigo-400" />}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Auto-Complete Toggle */}
+          <button
+            onClick={() => setAutoCompleteEnabled(prev => !prev)}
+            className={`p-1.5 sm:p-2 rounded-xl border transition flex items-center gap-1 ${
+              autoCompleteEnabled ? 'bg-emerald-950 text-emerald-400 border-emerald-600/60' : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}
+            title={autoCompleteEnabled ? "Auto-Complete ON (Auto-pops when ready)" : "Auto-Complete OFF (Manual Shutter)"}
+          >
+            {autoCompleteEnabled ? <Play className="w-3 h-3 fill-emerald-400" /> : <Pause className="w-3 h-3" />}
+          </button>
+
+          {/* Reset / Re-scan Paper */}
+          <button
+            onClick={handleResetScan}
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-amber-300 border border-slate-700 transition cursor-pointer"
+            title="Reset Sheet Scanner"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+
           {/* Sound Toggle */}
           <button
             onClick={() => setSoundEnabled(prev => !prev)}
             className={`p-1.5 sm:p-2 rounded-xl border transition ${
               soundEnabled ? 'bg-slate-800 text-emerald-400 border-slate-700' : 'bg-slate-800 text-slate-500 border-slate-700'
             }`}
-            title={soundEnabled ? 'Mute sound' : 'Enable sound'}
+            title={soundEnabled ? 'Mute audio' : 'Enable audio'}
           >
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
@@ -563,7 +792,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             <button
               id="btn_flip_camera"
               onClick={handleFlipCamera}
-              className="p-1.5 sm:p-2 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 transition"
+              className="p-1.5 sm:p-2 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
               title="Switch Front/Rear Camera"
             >
               <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
@@ -574,7 +803,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
           <button 
             id="btn_cancel_scan"
             onClick={onCancel}
-            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-red-950 text-slate-300 hover:text-red-400 border border-slate-700 transition"
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-red-950 text-slate-300 hover:text-red-400 border border-slate-700 transition cursor-pointer"
             title="Exit Scanner"
           >
             <X className="w-3.5 h-3.5" />
@@ -585,6 +814,19 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
       {/* MAIN CAMERA VIEWPORT CONTAINER */}
       <div className="relative flex-1 flex flex-col items-center justify-center bg-black overflow-hidden select-none min-h-0">
         
+        {/* Auto-Complete Celebration Banner Overlay */}
+        {isAutoCompleting && (
+          <div className="absolute inset-0 bg-emerald-950/90 z-40 flex flex-col items-center justify-center p-6 text-center text-white space-y-3 animate-fade-in backdrop-blur-md">
+            <div className="w-16 h-16 rounded-full bg-emerald-500/30 border-2 border-emerald-400 flex items-center justify-center animate-bounce shadow-[0_0_30px_rgba(52,211,153,0.8)]">
+              <CheckCircle2 className="w-10 h-10 text-emerald-300" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base sm:text-lg font-black text-white">All Answers Captured!</h3>
+              <p className="text-xs text-emerald-200">Automatically evaluating against master key & populating report...</p>
+            </div>
+          </div>
+        )}
+
         {/* Real Live Camera Video Stream */}
         <video 
           ref={handleVideoRef}
@@ -609,7 +851,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             </div>
             <h3 className="text-xs sm:text-sm font-bold text-slate-200">Speed-Ink Optical Scanner</h3>
             <p className="text-[11px] text-slate-400 max-w-xs mt-1 leading-tight">
-              Position student OMR sheet inside frame. Tap below to retry camera or upload.
+              Position student OMR sheet inside frame. Tap below to retry camera or snap with native camera.
             </p>
 
             {cameraError && (
@@ -621,7 +863,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             
             <button
               onClick={setupCamera}
-              className="mt-2.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold rounded-xl text-emerald-400 flex items-center gap-1.5 transition"
+              className="mt-2.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold rounded-xl text-emerald-400 flex items-center gap-1.5 transition cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
               <span>Retry Camera Permission</span>
@@ -629,14 +871,16 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
           </div>
         )}
 
-        {/* FLOATING TOP SCORE PILL (Responsive for iPhone SE) */}
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5">
+        {/* FLOATING TOP SCORE & FAST STICKY LOCK PROGRESS PILL */}
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-1">
           <div className="bg-slate-900/95 border border-emerald-500/50 backdrop-blur-md px-3 sm:px-4 py-1 sm:py-1.5 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.35)] flex items-center gap-1.5 sm:gap-2.5">
             
-            {/* Status Indicator */}
+            {/* Status Indicator with Locked Count */}
             <div className="flex items-center gap-1 bg-emerald-950 px-1.5 sm:px-2 py-0.5 rounded-full border border-emerald-600">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-[9px] sm:text-[10px] font-bold text-emerald-300 font-mono">MATCHED</span>
+              <span className="text-[9px] sm:text-[10px] font-bold text-emerald-300 font-mono">
+                {Object.keys(lockedAnswers).length}/{qCount} SCANNED
+              </span>
             </div>
 
             {/* Live Score */}
@@ -655,10 +899,18 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
               {liveGrade}
             </div>
           </div>
+
+          {/* Micro Progress Bar */}
+          <div className="w-36 h-1 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+            <div 
+              className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-150"
+              style={{ width: `${Math.round((Object.keys(lockedAnswers).length / (qCount || 1)) * 100)}%` }}
+            />
+          </div>
         </div>
 
         {/* AUTO-ALIGNMENT GRID BOX OVERLAY THAT LOCKS ONTO STUDENT SHEET */}
-        <div className="relative w-[92vw] max-w-[350px] h-[52vh] sm:h-[60vh] max-h-[460px] rounded-2xl sm:rounded-3xl flex flex-col justify-between p-2 sm:p-3 z-10 border-2 border-emerald-400/50 bg-slate-950/25 shadow-[0_0_20px_rgba(16,185,129,0.2)] backdrop-blur-[1px]">
+        <div className="relative w-[92vw] max-w-[360px] h-[52vh] sm:h-[60vh] max-h-[460px] rounded-2xl sm:rounded-3xl flex flex-col justify-between p-2 sm:p-3 z-10 border-2 border-emerald-400/50 bg-slate-950/25 shadow-[0_0_20px_rgba(16,185,129,0.2)] backdrop-blur-[1px]">
           
           {/* 4 Corner Markers */}
           <div className="absolute -top-1 -left-1 w-7 sm:w-9 h-7 sm:h-9 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
@@ -674,8 +926,9 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
               <span className="bg-slate-950/80 px-1.5 py-0.2 rounded border border-emerald-500/30 truncate max-w-[140px]">
                 ⊞ {currentKey?.title || 'Key'}
               </span>
-              <span className="bg-slate-950/80 px-1.5 py-0.2 rounded border border-emerald-500/30 text-emerald-300 shrink-0">
-                ⚡ Vision Live
+              <span className="bg-slate-950/80 px-1.5 py-0.2 rounded border border-emerald-500/30 text-emerald-300 shrink-0 flex items-center gap-1">
+                <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                <span>Target: Q{currentScanningTarget}</span>
               </span>
             </div>
 
@@ -691,15 +944,26 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                   <div key={colIdx} className="flex flex-col justify-around h-full bg-slate-950/50 border border-emerald-500/20 rounded-lg p-1 backdrop-blur-xs overflow-hidden">
                     {colQuestions.map((qNum) => {
                       const studentAns = (liveAnswers[qNum] || '').trim().toUpperCase();
+                      const isLocked = Boolean(lockedAnswers[qNum]);
                       const correctAns = getCorrectKeyAnswer(qNum);
                       const isCorrect = studentAns === correctAns;
+                      const isTarget = qNum === currentScanningTarget && !isLocked;
                       const isMissedOrBlank = !studentAns || studentAns === 'BLANK' || studentAns === 'MULTIPLE';
 
                       return (
-                        <div key={qNum} className="flex items-center justify-between gap-0.5 py-0.2">
+                        <div 
+                          key={qNum} 
+                          className={`flex items-center justify-between gap-0.5 py-0.2 px-0.5 rounded transition-all ${
+                            isTarget 
+                              ? 'bg-amber-500/20 border border-amber-400/60 ring-1 ring-amber-400/40 animate-pulse' 
+                              : (isLocked ? 'bg-emerald-950/30' : '')
+                          }`}
+                        >
                           {/* Question Number and Key */}
                           <div className="flex items-center gap-0.5 w-6 sm:w-7 shrink-0">
-                            <span className="text-[8px] sm:text-[9px] font-mono font-bold text-slate-300">
+                            <span className={`text-[8px] sm:text-[9px] font-mono font-bold ${
+                              isTarget ? 'text-amber-300 font-black' : (isLocked ? 'text-emerald-300' : 'text-slate-300')
+                            }`}>
                               {qNum}
                             </span>
                             <span className="text-[7px] sm:text-[8px] font-mono font-bold text-emerald-400">
@@ -709,7 +973,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
 
                           {/* Option Bubbles */}
                           <div className="flex items-center gap-0.5 sm:gap-1">
-                            {['A', 'B', 'C', 'D'].map((opt) => {
+                            {activeOptions.map((opt) => {
                               const isChosen = studentAns === opt;
                               const isKey = correctAns === opt;
 
@@ -719,7 +983,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                                   <button
                                     key={opt}
                                     onClick={() => handleManualBubbleToggle(qNum, opt)}
-                                    className="w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full border-2 border-emerald-400 bg-emerald-500/60 text-white font-black text-[7px] sm:text-[8px] flex items-center justify-center shadow-[0_0_6px_#34d399] transition"
+                                    className={`${optionsCount === 3 ? 'w-4 sm:w-5 h-4 sm:h-5' : 'w-3.5 sm:w-4 h-3.5 sm:h-4'} rounded-full border-2 border-emerald-400 bg-emerald-500/60 text-white font-black text-[7px] sm:text-[8px] flex items-center justify-center shadow-[0_0_6px_#34d399] transition cursor-pointer`}
                                     title={`Q${qNum}: Correct! [${opt}]`}
                                   >
                                     <Check className="w-2 sm:w-2.5 h-2 sm:h-2.5 stroke-[3]" />
@@ -731,7 +995,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                                   <button
                                     key={opt}
                                     onClick={() => handleManualBubbleToggle(qNum, opt)}
-                                    className="w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-xs border-2 border-red-500 bg-red-500/60 text-white font-black text-[7px] sm:text-[8px] flex items-center justify-center shadow-[0_0_6px_#ef4444] transition"
+                                    className={`${optionsCount === 3 ? 'w-4 sm:w-5 h-4 sm:h-5' : 'w-3.5 sm:w-4 h-3.5 sm:h-4'} rounded-xs border-2 border-red-500 bg-red-500/60 text-white font-black text-[7px] sm:text-[8px] flex items-center justify-center shadow-[0_0_6px_#ef4444] transition cursor-pointer`}
                                     title={`Q${qNum}: Chose [${opt}], Key is [${correctAns}]`}
                                   >
                                     <X className="w-2 sm:w-2.5 h-2 sm:h-2.5 stroke-[3] text-white" />
@@ -743,8 +1007,8 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                                   <button
                                     key={opt}
                                     onClick={() => handleManualBubbleToggle(qNum, opt)}
-                                    className="w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-xs border border-dashed border-amber-400 bg-amber-950/40 text-amber-300 font-bold text-[6px] sm:text-[7px] flex items-center justify-center"
-                                    title={`Q${qNum}: Missed (Key: [${correctAns}])`}
+                                    className={`${optionsCount === 3 ? 'w-4 sm:w-5 h-4 sm:h-5' : 'w-3.5 sm:w-4 h-3.5 sm:h-4'} rounded-xs border border-dashed border-amber-400 bg-amber-950/40 text-amber-300 font-bold text-[6px] sm:text-[7px] flex items-center justify-center cursor-pointer`}
+                                    title={`Q${qNum}: Unmarked (Key is [${correctAns}])`}
                                   >
                                     {opt}
                                   </button>
@@ -755,7 +1019,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                                   <button
                                     key={opt}
                                     onClick={() => handleManualBubbleToggle(qNum, opt)}
-                                    className="w-3.5 sm:w-4 h-3.5 sm:h-4 rounded-full border border-slate-600/70 text-slate-400 font-bold text-[6px] sm:text-[7px] flex items-center justify-center"
+                                    className={`${optionsCount === 3 ? 'w-4 sm:w-5 h-4 sm:h-5' : 'w-3.5 sm:w-4 h-3.5 sm:h-4'} rounded-full border border-slate-600/70 text-slate-400 font-bold text-[6px] sm:text-[7px] flex items-center justify-center cursor-pointer`}
                                   >
                                     {opt}
                                   </button>
@@ -774,7 +1038,10 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             {/* Bottom Status Tag */}
             <div className="text-center shrink-0">
               <span className="text-[9px] sm:text-[10px] font-semibold text-emerald-300 bg-slate-950/90 px-2.5 py-0.5 rounded-full border border-emerald-500/40 shadow-xs">
-                ✔ Match: {calculatedScore}/{qCount} Correct • Tap bubble to adjust
+                {autoCompleteEnabled 
+                  ? `⚡ Auto-graders active (${Object.keys(lockedAnswers).length}/${qCount})`
+                  : `Tap Shutter below when aligned (${Object.keys(lockedAnswers).length}/${qCount})`
+                }
               </span>
             </div>
 
@@ -784,7 +1051,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         {/* Scan Preset Mode Popover Button */}
         <button
           onClick={() => setShowSimSelector(prev => !prev)}
-          className="absolute bottom-2 right-3 z-20 text-[9px] sm:text-[10px] font-mono text-slate-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-lg backdrop-blur-sm flex items-center gap-1 shadow-xs transition"
+          className="absolute bottom-2 right-3 z-20 text-[9px] sm:text-[10px] font-mono text-slate-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-lg backdrop-blur-sm flex items-center gap-1 shadow-xs transition cursor-pointer"
         >
           <Sparkles className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-amber-400" />
           <span>{getPresetLabel(selectedPreset)}</span>
@@ -820,7 +1087,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
 
       </div>
 
-      {/* Hidden File Pickers */}
+      {/* Hidden File Pickers for Snap & Upload */}
       <input 
         ref={nativeFileInputRef}
         type="file" 
@@ -838,8 +1105,8 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         onChange={handleFilePicked} 
       />
 
-      {/* ACTION FOOTER (iPhone SE Optimized) */}
-      <div className="bg-slate-900/95 backdrop-blur-md px-3 sm:px-6 py-2 sm:py-3.5 border-t border-slate-800 flex flex-col items-center gap-1.5 sm:gap-2.5 z-30 shrink-0">
+      {/* ACTION FOOTER */}
+      <div className="bg-slate-900/95 backdrop-blur-md px-3 sm:px-6 py-2.5 sm:py-3.5 border-t border-slate-800 flex flex-col items-center gap-2 z-30 shrink-0">
         
         {/* Main Action Buttons */}
         <div className="w-full flex items-center justify-between gap-2 max-w-lg">
@@ -855,17 +1122,17 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             <span className="truncate">Override</span>
           </button>
 
-          {/* Center Snapshot Shutter Button */}
+          {/* Center SNAP & GRADE Shutter Button */}
           <button
             id="btn_shutter_snap"
             onClick={handleTriggerCapture}
-            className="w-10 sm:w-12 h-10 sm:h-12 rounded-full border-2 border-slate-700 bg-slate-800 hover:bg-slate-700 active:scale-90 flex items-center justify-center shadow-xs transition shrink-0"
-            title="Snap freeze photo"
+            className="w-14 sm:w-16 h-14 sm:h-16 rounded-full border-4 border-white bg-gradient-to-tr from-emerald-500 to-teal-400 hover:scale-105 active:scale-90 flex items-center justify-center shadow-[0_0_20px_rgba(52,211,153,0.6)] transition shrink-0 cursor-pointer"
+            title="Snap & Grade Now"
           >
-            <Camera className="w-4 sm:w-5 h-4 sm:h-5 text-slate-300" />
+            <Camera className="w-6 sm:w-7 h-6 sm:h-7 text-slate-950" />
           </button>
 
-          {/* [ Save & Next Paper ] Primary Momentum Button (< 5s Grading) */}
+          {/* [ Save & Next Paper ] */}
           <button
             id="btn_save_next_paper"
             onClick={handleSaveAndNextPaper}
@@ -882,18 +1149,18 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         <div className="w-full flex items-center justify-between max-w-lg text-[10px] sm:text-[11px] text-slate-400 font-mono pt-0.5">
           <button 
             onClick={() => galleryFileInputRef.current?.click()}
-            className="hover:text-slate-200 flex items-center gap-1"
+            className="hover:text-slate-200 flex items-center gap-1 cursor-pointer bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700"
           >
             <Upload className="w-3 h-3 text-sky-400" />
-            <span>Gallery</span>
+            <span>Upload File</span>
           </button>
 
-          <button
+          <button 
             onClick={() => nativeFileInputRef.current?.click()}
-            className="hover:text-slate-200 flex items-center gap-1"
+            className="hover:text-slate-200 flex items-center gap-1 cursor-pointer bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700"
           >
-            <Smartphone className="w-3 h-3 text-emerald-400" />
-            <span>Native Cam</span>
+            <Camera className="w-3 h-3 text-emerald-400" />
+            <span>Snap Camera</span>
           </button>
 
           <span className="text-emerald-400 font-bold">
@@ -918,7 +1185,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
               </div>
               <button 
                 onClick={() => setShowManualOverrideDrawer(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -946,11 +1213,11 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                       </div>
                       
                       <div className="flex items-center gap-1">
-                        {['A', 'B', 'C', 'D'].map(opt => (
+                        {activeOptions.map(opt => (
                           <button
                             key={opt}
                             onClick={() => handleManualBubbleToggle(q, opt)}
-                            className={`w-5 h-5 sm:w-6 sm:h-6 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold transition flex items-center justify-center ${
+                            className={`${optionsCount === 3 ? 'w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm' : 'w-5 h-5 sm:w-6 sm:h-6 text-[10px] sm:text-xs'} rounded-md sm:rounded-lg font-bold transition flex items-center justify-center cursor-pointer ${
                               studentAns === opt
                                 ? (opt === keyAns ? 'bg-emerald-500 text-slate-950' : 'bg-red-500 text-white')
                                 : 'bg-slate-800 text-slate-400 hover:text-white'
@@ -970,7 +1237,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
             <div className="border-t border-slate-800 pt-2.5 flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setShowManualOverrideDrawer(false)}
-                className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition shadow-md"
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition shadow-md cursor-pointer"
               >
                 Apply & Return to Camera (Score: {calculatedScore}/{qCount})
               </button>
@@ -988,7 +1255,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                 <Key className="w-3.5 h-3.5 text-amber-400" />
                 <span>Select Answer Key</span>
               </h3>
-              <button onClick={() => setShowKeySelector(false)} className="text-slate-400 hover:text-white">✕</button>
+              <button onClick={() => setShowKeySelector(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
             </div>
 
             <div className="space-y-1.5 max-h-60 overflow-y-auto">
@@ -1004,7 +1271,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
                       if (onSelectKey) onSelectKey(k);
                       setShowKeySelector(false);
                     }}
-                    className={`w-full p-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between transition ${
+                    className={`w-full p-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between transition cursor-pointer ${
                       currentKey?.id === k.id
                         ? 'bg-emerald-950 border border-emerald-500 text-emerald-200 shadow-xs'
                         : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-750'
@@ -1024,7 +1291,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
 
             <button
               onClick={() => setShowKeySelector(false)}
-              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition"
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
             >
               Close
             </button>
